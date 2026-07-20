@@ -1222,3 +1222,98 @@ body {
     font-size: 13px;
   }
 }
+
+/* CBT Sidebar Toggle state */
+.cbt-sidebar.collapsed {
+  display: none !important;
+}
+
+/* Premium Word-style Equation Editor Styles */
+.eq-editor-panel {
+  background-color: var(--neutral-200);
+  border-bottom: 1px solid var(--neutral-400);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: slideDown var(--transition-normal);
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.eq-editor-panel.hidden {
+  display: none !important;
+}
+
+.eq-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--neutral-400);
+  padding-bottom: 8px;
+  overflow-x: auto;
+}
+
+.eq-tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--neutral-700);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.eq-tab-btn:hover {
+  background-color: var(--neutral-400);
+  color: var(--neutral-900);
+}
+
+.eq-tab-btn.active {
+  background-color: var(--primary);
+  color: white;
+}
+
+.eq-tab-pane {
+  display: none;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 6px 2px;
+}
+
+.eq-tab-pane.active {
+  display: grid;
+}
+
+.eq-btn {
+  background-color: white;
+  border: 1px solid var(--neutral-400);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  min-height: 48px;
+  transition: all var(--transition-fast);
+}
+
+.eq-btn:hover {
+  border-color: var(--primary);
+  background-color: var(--primary-light);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.eq-btn .mjx-container {
+  margin: 0 !important;
+}
+

@@ -21,7 +21,7 @@ const DEFAULT_SEED_DATA = {
     {
       id: 'usr-1',
       name: 'Super Admin BankSoal',
-      email: 'sakeerasayya@gmail.com',
+      email: 'admin@banksoal.pro',
       password: 'admin123',
       role: 'SUPER_ADMIN',
       schoolId: null,
@@ -1757,6 +1757,8 @@ const DEFAULT_SEED_DATA = {
         'q-m31', 'q-m32', 'q-m33', 'q-m34', 'q-m35', 'q-m36', 'q-m37', 'q-m38', 'q-m39', 'q-m40',
         'q-m41', 'q-m42', 'q-m43', 'q-m44', 'q-m45', 'q-m46', 'q-m47', 'q-m48', 'q-m49', 'q-m50'
       ],
+      enableAudio: true,
+      enableAnim: true,
       createdAt: '2026-07-20T12:00:00Z'
     }
   ],
@@ -1779,7 +1781,40 @@ const DEFAULT_SEED_DATA = {
     }
   ],
   bookmarks: [],
-  results: []
+  results: [
+    {
+      id: 'res-seed-1',
+      userId: 'usr-6',
+      userName: 'Andi Wijaya',
+      packageId: 'pkg-2',
+      packageName: 'Latihan Mandiri Matematika (LaTeX & HOTS)',
+      subjectName: 'Matematika',
+      className: 'X',
+      score: 82,
+      totalQuestions: 50,
+      correctCount: 41,
+      incorrectCount: 9,
+      unansweredCount: 0,
+      answers: {},
+      timestamp: '2026-07-20T14:30:00Z'
+    },
+    {
+      id: 'res-seed-2',
+      userId: 'usr-6',
+      userName: 'Andi Wijaya',
+      packageId: 'pkg-1',
+      packageName: 'Ulangan Tengah Semester (UTS) Ganjil Informatika Kelas X',
+      subjectName: 'Informatika',
+      className: 'X',
+      score: 50,
+      totalQuestions: 2,
+      correctCount: 1,
+      incorrectCount: 1,
+      unansweredCount: 0,
+      answers: {},
+      timestamp: '2026-07-20T15:15:00Z'
+    }
+  ]
 };
 
 // Database Engine Object

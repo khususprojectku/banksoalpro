@@ -11,6 +11,7 @@ let activeUser = null;
 let currentChartMapel = null;
 let currentChartKesulitan = null;
 let currentChartGuru = null;
+let cbtAudio = null; // Global CBT background music player
 
 // DOM Selectors
 const appMount = document.getElementById('app');
@@ -23,6 +24,16 @@ function handleRouting() {
   activeUser = JSON.parse(sessionStorage.getItem('active_user') || 'null');
 
   if (!activeUser) {
+    // Cleanup CBT resources if logging out
+    if (cbtAudio) {
+      cbtAudio.pause();
+      cbtAudio = null;
+    }
+    const canvas = document.getElementById('cbt-animation-canvas');
+    if (canvas && canvas.cleanup) {
+      canvas.cleanup();
+      canvas.remove();
+    }
     renderLogin();
     return;
   }
@@ -31,6 +42,19 @@ function handleRouting() {
   const hash = window.location.hash || '#dashboard';
   const page = hash.split('?')[0];
   const queryParams = parseQueryParams(hash);
+
+  // Cleanup audio & animation when routing away from CBT
+  if (page !== '#cbt') {
+    if (cbtAudio) {
+      cbtAudio.pause();
+      cbtAudio = null;
+    }
+    const canvas = document.getElementById('cbt-animation-canvas');
+    if (canvas && canvas.cleanup) {
+      canvas.cleanup();
+      canvas.remove();
+    }
+  }
 
   if (page === '#cbt') {
     renderCBTScreen(queryParams.id);
@@ -126,6 +150,194 @@ function setupVisualEditor(textareaId, previewId) {
   // Bind toolbar buttons
   const container = editor.closest('.rich-editor-mock');
   if (container) {
+    // Add Equation Editor toggle button if not exists
+    const toolbar = container.querySelector('.editor-toolbar');
+    if (toolbar && !toolbar.querySelector('#btn-eq-editor-toggle')) {
+      const latexDisplayBtn = toolbar.querySelector('[data-editor-cmd="latex-display"]');
+      
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'toolbar-btn';
+      toggleBtn.id = 'btn-eq-editor-toggle';
+      toggleBtn.title = 'Equation Editor (Word Style)';
+      toggleBtn.innerHTML = '<i data-lucide="square-pi" style="width:14px; height:14px;"></i>';
+      
+      if (latexDisplayBtn) {
+        latexDisplayBtn.after(toggleBtn);
+        const divider = document.createElement('span');
+        divider.className = 'toolbar-divider';
+        latexDisplayBtn.after(divider);
+      } else {
+        toolbar.appendChild(toggleBtn);
+      }
+      lucide.createIcons();
+    }
+
+    // Add Equation Editor Panel if not exists
+    let eqPanel = container.querySelector('.eq-editor-panel');
+    if (!eqPanel) {
+      eqPanel = document.createElement('div');
+      eqPanel.className = 'eq-editor-panel hidden';
+      eqPanel.innerHTML = `
+        <div class="eq-tabs">
+          <button type="button" class="eq-tab-btn active" data-eq-tab="eq-pecahan">Pecahan</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-pangkat">Pangkat</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-akar">Akar & Log</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-kalkulus">Kalkulus</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-matriks">Matriks & Kurung</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-simbol">Simbol</button>
+          <button type="button" class="eq-tab-btn" data-eq-tab="eq-yunani">Yunani</button>
+        </div>
+        <div class="eq-tab-contents" style="background:#fff; border:1px solid var(--neutral-400); border-radius:var(--radius-sm); padding:10px;">
+          <!-- Pecahan -->
+          <div class="eq-tab-pane active" id="eq-pecahan">
+            <button type="button" class="eq-btn" data-latex="\\frac{x}{y}">$$\\frac{x}{y}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\frac{dy}{dx}">$$\\frac{dy}{dx}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\frac{\\partial y}{\\partial x}">$$\\frac{\\partial y}{\\partial x}$$</button>
+            <button type="button" class="eq-btn" data-latex="x/y">$$x/y$$</button>
+          </div>
+          <!-- Pangkat -->
+          <div class="eq-tab-pane" id="eq-pangkat">
+            <button type="button" class="eq-btn" data-latex="x^{y}">$$x^{y}$$</button>
+            <button type="button" class="eq-btn" data-latex="x_{y}">$$x_{y}$$</button>
+            <button type="button" class="eq-btn" data-latex="x_{y}^{z}">$$x_{y}^{z}$$</button>
+            <button type="button" class="eq-btn" data-latex="^{y}_{x}X">$$^{y}_{x}X$$</button>
+          </div>
+          <!-- Akar -->
+          <div class="eq-tab-pane" id="eq-akar">
+            <button type="button" class="eq-btn" data-latex="\\sqrt{x}">$$\\sqrt{x}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\sqrt[n]{x}">$$\\sqrt[n]{x}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\sqrt{x^2+y^2}">$$\\sqrt{x^2+y^2}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\log(x)">$$\\log(x)$$</button>
+            <button type="button" class="eq-btn" data-latex="\\log_{b}(a)">$$\\log_{b}(a)$$</button>
+            <button type="button" class="eq-btn" data-latex="\\ln(x)">$$\\ln(x)$$</button>
+          </div>
+          <!-- Kalkulus -->
+          <div class="eq-tab-pane" id="eq-kalkulus">
+            <button type="button" class="eq-btn" data-latex="\\sum_{i=1}^{n}">$$\\sum_{i=1}^{n}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\prod_{i=1}^{n}">$$\\prod_{i=1}^{n}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\int x \\, dx">$$\\int x \\, dx$$</button>
+            <button type="button" class="eq-btn" data-latex="\\int_{a}^{b} x \\, dx">$$\\int_{a}^{b} x \\, dx$$</button>
+            <button type="button" class="eq-btn" data-latex="\\iint x \\, dx \\, dy">$$\\iint x \\, dx \\, dy$$</button>
+            <button type="button" class="eq-btn" data-latex="\\lim_{x \\to \\infty}">$$\\lim_{x \\to \\infty}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\lim_{x \\to 0}">$$\\lim_{x \\to 0}$$</button>
+          </div>
+          <!-- Matriks & Kurung -->
+          <div class="eq-tab-pane" id="eq-matriks">
+            <button type="button" class="eq-btn" data-latex="\\left( x \\right)">$$\\left( x \\right)$$</button>
+            <button type="button" class="eq-btn" data-latex="\\left[ x \\right]">$$\\left[ x \\right]$$</button>
+            <button type="button" class="eq-btn" data-latex="\\left\\{ x \\right\\}">$$\\left\\{ x \\right\\}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}">$$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\begin{vmatrix} a & b \\\\ c & d \\end{vmatrix}">$$\\begin{vmatrix} a & b \\\\ c & d \\end{vmatrix}$$</button>
+            <button type="button" class="eq-btn" data-latex="\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}">$$\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$$</button>
+          </div>
+          <!-- Simbol -->
+          <div class="eq-tab-pane" id="eq-simbol">
+            <button type="button" class="eq-btn" data-latex="\\pm">$$\\pm$$</button>
+            <button type="button" class="eq-btn" data-latex="\\times">$$\\times$$</button>
+            <button type="button" class="eq-btn" data-latex="\\div">$$\\div$$</button>
+            <button type="button" class="eq-btn" data-latex="\\neq">$$\\neq$$</button>
+            <button type="button" class="eq-btn" data-latex="\\approx">$$\\approx$$</button>
+            <button type="button" class="eq-btn" data-latex="\\le">$$\\le$$</button>
+            <button type="button" class="eq-btn" data-latex="\\ge">$$\\ge$$</button>
+            <button type="button" class="eq-btn" data-latex="\\infty">$$\\infty$$</button>
+            <button type="button" class="eq-btn" data-latex="\\to">$$\\to$$</button>
+            <button type="button" class="eq-btn" data-latex="\\implies">$$\\implies$$</button>
+            <button type="button" class="eq-btn" data-latex="\\iff">$$\\iff$$</button>
+            <button type="button" class="eq-btn" data-latex="\\in">$$\\in$$</button>
+            <button type="button" class="eq-btn" data-latex="\\notin">$$\\notin$$</button>
+            <button type="button" class="eq-btn" data-latex="\\subset">$$\\subset$$</button>
+            <button type="button" class="eq-btn" data-latex="\\cap">$$\\cap$$</button>
+            <button type="button" class="eq-btn" data-latex="\\cup">$$\\cup$$</button>
+            <button type="button" class="eq-btn" data-latex="\\forall">$$\\forall$$</button>
+            <button type="button" class="eq-btn" data-latex="\\exists">$$\\exists$$</button>
+            <button type="button" class="eq-btn" data-latex="\\therefore">$$\\therefore$$</button>
+            <button type="button" class="eq-btn" data-latex="\\because">$$\\because$$</button>
+          </div>
+          <!-- Yunani -->
+          <div class="eq-tab-pane" id="eq-yunani">
+            <button type="button" class="eq-btn" data-latex="\\alpha">$$\\alpha$$</button>
+            <button type="button" class="eq-btn" data-latex="\\beta">$$\\beta$$</button>
+            <button type="button" class="eq-btn" data-latex="\\gamma">$$\\gamma$$</button>
+            <button type="button" class="eq-btn" data-latex="\\delta">$$\\delta$$</button>
+            <button type="button" class="eq-btn" data-latex="\\theta">$$\\theta$$</button>
+            <button type="button" class="eq-btn" data-latex="\\pi">$$\\pi$$</button>
+            <button type="button" class="eq-btn" data-latex="\\sigma">$$\\sigma$$</button>
+            <button type="button" class="eq-btn" data-latex="\\omega">$$\\omega$$</button>
+            <button type="button" class="eq-btn" data-latex="\\mu">$$\\mu$$</button>
+            <button type="button" class="eq-btn" data-latex="\\lambda">$$\\lambda$$</button>
+            <button type="button" class="eq-btn" data-latex="\\phi">$$\\phi$$</button>
+            <button type="button" class="eq-btn" data-latex="\\Delta">$$\\Delta$$</button>
+            <button type="button" class="eq-btn" data-latex="\\Sigma">$$\\Sigma$$</button>
+            <button type="button" class="eq-btn" data-latex="\\Omega">$$\\Omega$$</button>
+            <button type="button" class="eq-btn" data-latex="\\Theta">$$\\Theta$$</button>
+          </div>
+        </div>
+      `;
+      editor.before(eqPanel);
+
+      // Tab switching handlers
+      const tabBtns = eqPanel.querySelectorAll('.eq-tab-btn');
+      const tabPanes = eqPanel.querySelectorAll('.eq-tab-pane');
+      tabBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          tabBtns.forEach(b => b.classList.remove('active'));
+          tabPanes.forEach(p => p.classList.remove('active'));
+          
+          btn.classList.add('active');
+          const paneId = btn.dataset.eqTab;
+          eqPanel.querySelector(`#${paneId}`).classList.add('active');
+        });
+      });
+
+      // Equation button click handlers
+      const eqBtns = eqPanel.querySelectorAll('.eq-btn');
+      eqBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const latex = btn.dataset.latex;
+          
+          const start = editor.selectionStart;
+          const end = editor.selectionEnd;
+          const text = editor.value;
+
+          // Simple check for math block
+          const beforeText = text.substring(0, start);
+          const dollarCount = (beforeText.match(/\$/g) || []).length;
+          const inMath = (dollarCount % 2 === 1);
+
+          let replacement = latex;
+          if (!inMath) {
+            replacement = `$${latex}$`;
+          }
+
+          editor.value = text.substring(0, start) + replacement + text.substring(end);
+          editor.focus();
+          const newCursorPos = start + replacement.length;
+          editor.setSelectionRange(newCursorPos, newCursorPos);
+
+          // Dispatch input event to update previews
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      });
+    }
+
+    // Toggle panel event handler
+    const toggleBtn = toolbar.querySelector('#btn-eq-editor-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const isHidden = eqPanel.classList.toggle('hidden');
+        if (!isHidden) {
+          if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise([eqPanel]).catch(err => console.error(err));
+          }
+        }
+      });
+    }
+
+    // Bind original toolbar buttons
     const buttons = container.querySelectorAll('[data-editor-cmd]');
     buttons.forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -320,6 +532,7 @@ function renderAppShell(activePage, queryParams) {
     { page: '#soal', label: 'Bank Soal', icon: 'file-text', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
     { page: '#impor', label: 'Import Soal', icon: 'file-up', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU'] },
     { page: '#paket', label: 'Paket Soal', icon: 'package', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#rekap-ujian', label: 'Hasil & Rekap Ujian', icon: 'award', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
     { page: '#logs', label: 'Audit Log & Backup', icon: 'shield-alert', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
   ];
 
@@ -472,6 +685,13 @@ function renderAppShell(activePage, queryParams) {
       titleDisplay.innerText = 'Manajemen Paket Soal';
       subtitleDisplay.innerText = 'Penyusunan paket ujian otomatis/acak dan ekspor berkas';
       renderPaketSoal(contentMount);
+      break;
+    case '#rekap-ujian':
+      titleDisplay.innerText = 'Hasil & Rekap Ujian';
+      subtitleDisplay.innerText = activeUser.role === 'SISWA'
+        ? 'Pemantauan riwayat nilai dan analisis hasil ujian mandiri Anda'
+        : 'Pemantauan rekapitulasi nilai dan riwayat pengerjaan ujian siswa';
+      renderRekapUjian(contentMount);
       break;
     case '#logs':
       titleDisplay.innerText = 'Audit Keamanan & Cadangan';
@@ -2707,6 +2927,19 @@ function openCreatePackageModal() {
               </select>
             </div>
           </div>
+        <!-- Audio & Animation Settings -->
+        <div style="border-top:1px dashed var(--neutral-400); padding-top:16px; margin-top:8px;">
+          <h4 style="font-size:13px; font-weight:700; margin-bottom:12px;">Fitur Interaktif CBT Ujian</h4>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+              <input type="checkbox" id="p-enable-audio" style="width:16px; height:16px;">
+              <span>Aktifkan Musik Latar (quizmusic.mp3)</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+              <input type="checkbox" id="p-enable-anim" style="width:16px; height:16px;">
+              <span>Aktifkan Animasi Latar Belakang (Partikel)</span>
+            </label>
+          </div>
         </div>
 
       </div>
@@ -2803,6 +3036,9 @@ function openCreatePackageModal() {
       showToast(`Generator mengacak ${questionIds.length} soal yang cocok.`, 'success');
     }
 
+    const enableAudio = document.getElementById('p-enable-audio').checked;
+    const enableAnim = document.getElementById('p-enable-anim').checked;
+
     db.insert('packages', {
       name,
       type,
@@ -2812,6 +3048,8 @@ function openCreatePackageModal() {
       creatorId: activeUser.id,
       creatorName: activeUser.name,
       questionIds,
+      enableAudio,
+      enableAnim,
       createdAt: new Date().toISOString()
     });
 
@@ -3104,6 +3342,400 @@ function renderStudentDashboard(mount) {
 }
 
 // ----------------------------------------------------
+// 12.A. REKAP & RIWAYAT HASIL UJIAN (SISWA & GURU)
+// ----------------------------------------------------
+function renderRekapUjian(mount) {
+  const subjects = db.get('subjects');
+  const classes = db.get('classes');
+  
+  if (activeUser.role === 'SISWA') {
+    const results = db.get('results').filter(r => r.userId === activeUser.id);
+    
+    // Summary calculations
+    const totalExams = results.length;
+    const avgScore = totalExams > 0 ? Math.round(results.reduce((acc, r) => acc + r.score, 0) / totalExams) : 0;
+    const highestScore = totalExams > 0 ? Math.max(...results.map(r => r.score)) : 0;
+    const passCount = results.filter(r => r.score >= 75).length;
+    const passRate = totalExams > 0 ? Math.round((passCount / totalExams) * 100) : 0;
+
+    mount.innerHTML = `
+      <!-- Summary metrics cards -->
+      <div class="metrics-grid" style="margin-bottom: 24px;">
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Ujian Diikuti</span>
+            <span class="metric-value">${totalExams}</span>
+          </div>
+          <div class="metric-icon-box metric-blue"><i data-lucide="clipboard-list"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Rerata Nilai</span>
+            <span class="metric-value" style="color: ${avgScore >= 75 ? 'var(--success-text)' : 'var(--warning-text)'};">${avgScore}</span>
+          </div>
+          <div class="metric-icon-box metric-purple"><i data-lucide="award"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Nilai Tertinggi</span>
+            <span class="metric-value">${highestScore}</span>
+          </div>
+          <div class="metric-icon-box metric-indigo"><i data-lucide="trending-up"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Persentase Lulus KKM</span>
+            <span class="metric-value">${passRate}%</span>
+          </div>
+          <div class="metric-icon-box metric-orange"><i data-lucide="percent"></i></div>
+        </div>
+      </div>
+
+      <div class="charts-grid" style="margin-bottom: 24px;">
+        <!-- Line Chart showing score progression -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Grafik Rekap Perkembangan Nilai</h3>
+            <i data-lucide="line-chart" style="color: var(--neutral-600);"></i>
+          </div>
+          <div class="card-body">
+            <div class="chart-container" style="position: relative; height:250px; width:100%;">
+              <canvas id="chart-rekap-siswa"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Table -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Riwayat Lengkap Ujian Mandiri</h3>
+          <i data-lucide="history" style="color: var(--neutral-600);"></i>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div class="table-wrapper">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nama Paket Soal</th>
+                  <th>Mata Pelajaran</th>
+                  <th>Tanggal Pengerjaan</th>
+                  <th>Nilai Ujian</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Tinjauan</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${results.map(r => {
+                  const isPassed = r.score >= 75;
+                  const scoreColor = isPassed ? 'var(--success-text)' : 'var(--danger-text)';
+                  const badgeClass = isPassed ? 'badge-success' : 'badge-danger';
+                  return `
+                    <tr>
+                      <td><strong style="color:var(--neutral-900);">${r.packageName}</strong></td>
+                      <td><span class="badge badge-primary">${r.subjectName}</span></td>
+                      <td>${new Date(r.timestamp).toLocaleString('id-ID')}</td>
+                      <td><span style="font-weight: 800; font-size:16px; color:${scoreColor};">${r.score}</span></td>
+                      <td><span class="badge ${badgeClass}">${isPassed ? 'TUNTAS' : 'REMEDIAL'}</span></td>
+                      <td style="text-align:right;">
+                        <a href="#cbt-result?id=${r.id}" class="btn btn-secondary" style="padding:6px 12px; font-size:12px; display:inline-flex; align-items:center; gap:4px;">
+                          <i data-lucide="eye" style="width:12px; height:12px;"></i>
+                          <span>Lihat Review</span>
+                        </a>
+                      </td>
+                    </tr>
+                  `;
+                }).join('') || '<tr><td colspan="6" style="text-align:center; padding:30px;">Belum ada riwayat pengerjaan ujian.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    lucide.createIcons();
+
+    // Render line chart
+    if (totalExams > 0) {
+      setTimeout(() => {
+        const canvas = document.getElementById('chart-rekap-siswa');
+        if (!canvas) return;
+        
+        const sorted = [...results].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        const labels = sorted.map(r => new Date(r.timestamp).toLocaleDateString('id-ID'));
+        const scores = sorted.map(r => r.score);
+
+        new Chart(canvas, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Nilai Ujian',
+              data: scores,
+              borderColor: 'rgb(79, 70, 229)',
+              backgroundColor: 'rgba(79, 70, 229, 0.1)',
+              borderWidth: 3,
+              tension: 0.3,
+              fill: true,
+              pointBackgroundColor: 'rgb(79, 70, 229)',
+              pointRadius: 6,
+              pointHoverRadius: 8
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                min: 0,
+                max: 100,
+                ticks: {
+                  stepSize: 20
+                }
+              }
+            },
+            plugins: {
+              legend: {
+                display: false
+              }
+            }
+          }
+        });
+      }, 50);
+    }
+  } else {
+    // For GURU, ADMIN_SEKOLAH, SUPER_ADMIN
+    const allResults = db.get('results');
+    
+    const renderTable = (filtered) => {
+      const tbody = document.getElementById('rekap-tbody-mount');
+      if (!tbody) return;
+
+      tbody.innerHTML = filtered.map(r => {
+        const isPassed = r.score >= 75;
+        const scoreColor = isPassed ? 'var(--success-text)' : 'var(--danger-text)';
+        const badgeClass = isPassed ? 'badge-success' : 'badge-danger';
+        return `
+          <tr>
+            <td>
+              <div style="font-weight:700; color:var(--neutral-900);">${r.userName}</div>
+              <div style="font-size:10px; color:var(--neutral-600); margin-top:2px;">Kelas ${r.className || '-'}</div>
+            </td>
+            <td><span class="badge badge-primary">${r.subjectName}</span></td>
+            <td>
+              <div style="font-weight:600; color:var(--neutral-800);">${r.packageName}</div>
+              <div style="font-size:10px; color:var(--neutral-600); margin-top:2px;">${new Date(r.timestamp).toLocaleString('id-ID')}</div>
+            </td>
+            <td><span style="font-weight: 800; font-size:15px; color:${scoreColor};">${r.score}</span></td>
+            <td><span class="badge ${badgeClass}">${isPassed ? 'TUNTAS' : 'REMEDIAL'}</span></td>
+            <td style="text-align:right;">
+              <a href="#cbt-result?id=${r.id}" class="btn btn-secondary" style="padding:6px 12px; font-size:12px; display:inline-flex; align-items:center; gap:4px;">
+                <i data-lucide="eye" style="width:12px; height:12px;"></i>
+                <span>Review</span>
+              </a>
+            </td>
+          </tr>
+        `;
+      }).join('') || '<tr><td colspan="6" style="text-align:center; padding:30px;">Tidak ditemukan data rekapitulasi nilai.</td></tr>';
+      
+      lucide.createIcons();
+    };
+
+    const updateStats = (filtered) => {
+      const total = filtered.length;
+      const avg = total > 0 ? Math.round(filtered.reduce((acc, r) => acc + r.score, 0) / total) : 0;
+      const highest = total > 0 ? Math.max(...filtered.map(r => r.score)) : 0;
+      const passCount = filtered.filter(r => r.score >= 75).length;
+      const passRate = total > 0 ? Math.round((passCount / total) * 100) : 0;
+
+      document.getElementById('stat-total-exams').innerText = total;
+      document.getElementById('stat-avg-score').innerText = avg;
+      document.getElementById('stat-avg-score').style.color = avg >= 75 ? 'var(--success-text)' : 'var(--warning-text)';
+      document.getElementById('stat-highest-score').innerText = highest;
+      document.getElementById('stat-pass-rate').innerText = `${passRate}%`;
+    };
+
+    mount.innerHTML = `
+      <!-- Stats Summary -->
+      <div class="metrics-grid" style="margin-bottom: 24px;">
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Ujian Dikerjakan</span>
+            <span class="metric-value" id="stat-total-exams">0</span>
+          </div>
+          <div class="metric-icon-box metric-blue"><i data-lucide="clipboard-list"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Rerata Nilai</span>
+            <span class="metric-value" id="stat-avg-score">0</span>
+          </div>
+          <div class="metric-icon-box metric-purple"><i data-lucide="award"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Nilai Tertinggi</span>
+            <span class="metric-value" id="stat-highest-score">0</span>
+          </div>
+          <div class="metric-icon-box metric-indigo"><i data-lucide="trending-up"></i></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-info">
+            <span class="metric-label">Tingkat Ketuntasan</span>
+            <span class="metric-value" id="stat-pass-rate">0%</span>
+          </div>
+          <div class="metric-icon-box metric-orange"><i data-lucide="check-circle"></i></div>
+        </div>
+      </div>
+
+      <!-- Filters & Search block -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-body" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+          <div style="flex:1; min-width:200px;">
+            <label class="form-label" style="margin-bottom:6px;">Cari Siswa atau Paket</label>
+            <input type="text" id="filter-search" class="form-input" placeholder="Ketik nama siswa atau nama paket...">
+          </div>
+          <div style="width:150px;">
+            <label class="form-label" style="margin-bottom:6px;">Tingkat Kelas</label>
+            <select id="filter-class" class="form-input">
+              <option value="">Semua Kelas</option>
+              ${classes.map(c => `<option value="${c.name}">Kelas ${c.name}</option>`).join('')}
+            </select>
+          </div>
+          <div style="width:180px;">
+            <label class="form-label" style="margin-bottom:6px;">Mata Pelajaran</label>
+            <select id="filter-subject" class="form-input">
+              <option value="">Semua Mapel</option>
+              ${subjects.map(s => `<option value="${s.name}">${s.name}</option>`).join('')}
+            </select>
+          </div>
+          <div style="align-self:flex-end;">
+            <button class="btn btn-primary" id="btn-export-rekap-excel" style="background-color:var(--success); border-color:var(--success); font-weight:700; height:42px; display:flex; align-items:center; gap:8px;">
+              <i data-lucide="file-spreadsheet"></i>
+              <span>Ekspor Excel</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table results -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Rekapitulasi Nilai Seluruh Siswa</h3>
+          <i data-lucide="users" style="color:var(--neutral-600);"></i>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div class="table-wrapper">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nama Siswa</th>
+                  <th>Mata Pelajaran</th>
+                  <th>Paket Ujian & Waktu</th>
+                  <th>Nilai</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="rekap-tbody-mount">
+                <!-- Injected dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    lucide.createIcons();
+
+    const searchInput = document.getElementById('filter-search');
+    const classSelect = document.getElementById('filter-class');
+    const subjectSelect = document.getElementById('filter-subject');
+    const exportBtn = document.getElementById('btn-export-rekap-excel');
+
+    const runFilters = () => {
+      const searchVal = searchInput.value.toLowerCase();
+      const classVal = classSelect.value;
+      const subjectVal = subjectSelect.value;
+
+      let filtered = allResults;
+
+      // Filter by search
+      if (searchVal) {
+        filtered = filtered.filter(r => 
+          r.userName.toLowerCase().includes(searchVal) || 
+          r.packageName.toLowerCase().includes(searchVal)
+        );
+      }
+      
+      // Filter by Class
+      if (classVal) {
+        filtered = filtered.filter(r => r.className === classVal);
+      }
+
+      // Filter by Subject
+      if (subjectVal) {
+        filtered = filtered.filter(r => r.subjectName === subjectVal);
+      }
+
+      renderTable(filtered);
+      updateStats(filtered);
+      return filtered;
+    };
+
+    // Bind listeners
+    searchInput.addEventListener('input', runFilters);
+    classSelect.addEventListener('change', runFilters);
+    subjectSelect.addEventListener('change', runFilters);
+
+    // Initial render
+    const initialList = runFilters();
+
+    // Export to Excel handler
+    exportBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const currentFiltered = runFilters();
+      
+      if (currentFiltered.length === 0) {
+        showToast('Tidak ada data untuk diekspor.', 'error');
+        return;
+      }
+
+      const excelData = currentFiltered.map((r, idx) => ({
+        'No': idx + 1,
+        'Nama Siswa': r.userName,
+        'Kelas': `Kelas ${r.className || ''}`,
+        'Mata Pelajaran': r.subjectName,
+        'Nama Paket Ujian': r.packageName,
+        'Nilai Ujian': r.score,
+        'Status Kelulusan': r.score >= 75 ? 'TUNTAS' : 'REMEDIAL',
+        'Tanggal Pengerjaan': new Date(r.timestamp).toLocaleString('id-ID')
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(excelData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Rekap Nilai Siswa");
+      
+      // Set Column widths
+      const wscols = [
+        {wch: 5},
+        {wch: 25},
+        {wch: 12},
+        {wch: 20},
+        {wch: 35},
+        {wch: 12},
+        {wch: 15},
+        {wch: 25}
+      ];
+      ws['!cols'] = wscols;
+
+      XLSX.writeFile(wb, `Rekap_Nilai_Ujian_${new Date().toISOString().slice(0,10)}.xlsx`);
+      showToast('Berhasil mengunduh rekap hasil ujian Excel!', 'success');
+    });
+  }
+}
+
+// ----------------------------------------------------
 // 13. SISWA: INTERACTIVE CBT EXAM SCREEN (FULLSCREEN MOCK)
 // ----------------------------------------------------
 let cbtInterval = null; // Global interval tracker to prevent leaks
@@ -3363,15 +3995,28 @@ function renderCBTScreen(packageId) {
           <span style="font-size:16px; font-weight:800; color:var(--neutral-900); max-width:400px; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;" title="${pkg.name}">${pkg.name}</span>
         </div>
         
-        <div class="timer-display" id="cbt-timer-mount">
-          <i data-lucide="clock" style="width:18px; height:18px;"></i>
-          <span id="cbt-timer-clock">00:00:00</span>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:flex-end;">
+          ${pkg.enableAudio ? `
+            <button class="btn btn-secondary" id="btn-mute-audio" style="width:38px; height:38px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Bisukan / Bunyikan Musik">
+              <i data-lucide="volume-2" style="width:16px; height:16px;"></i>
+            </button>
+          ` : ''}
+
+          <button class="btn btn-secondary" id="btn-toggle-sidebar" style="font-weight:600; display:flex; align-items:center; gap:8px; padding: 8px 14px; font-size: 13px;">
+            <i data-lucide="layout-sidebar"></i>
+            <span id="text-toggle-sidebar">Sembunyikan Nomor</span>
+          </button>
+          
+          <div class="timer-display" id="cbt-timer-mount" style="padding: 6px 12px; font-size: 15px;">
+            <i data-lucide="clock" style="width:16px; height:16px;"></i>
+            <span id="cbt-timer-clock">00:00:00</span>
+          </div>
+          
+          <button class="btn btn-primary" id="btn-submit-cbt" style="background-color:var(--success); border-color:var(--success); font-weight:700; padding: 8px 14px; font-size: 13px;">
+            <i data-lucide="check-square"></i>
+            <span>Selesai Ujian</span>
+          </button>
         </div>
-        
-        <button class="btn btn-primary" id="btn-submit-cbt" style="background-color:var(--success); border-color:var(--success); font-weight:700;">
-          <i data-lucide="check-square"></i>
-          <span>Selesai Ujian</span>
-        </button>
       </header>
       
       <!-- Body workspace -->
@@ -3429,6 +4074,70 @@ function renderCBTScreen(packageId) {
 
   lucide.createIcons();
 
+  // Background Music Logic
+  if (pkg.enableAudio) {
+    if (cbtAudio) {
+      cbtAudio.pause();
+    }
+    cbtAudio = new Audio('quizmusic.mp3');
+    cbtAudio.loop = true;
+    cbtAudio.volume = 0.4;
+
+    const startAudio = () => {
+      if (cbtAudio) {
+        cbtAudio.play().catch(err => console.log('Autoplay blocked. Will try again on click.'));
+      }
+      document.removeEventListener('click', startAudio);
+      document.removeEventListener('keydown', startAudio);
+    };
+
+    document.addEventListener('click', startAudio);
+    document.addEventListener('keydown', startAudio);
+
+    // Try playing immediately
+    cbtAudio.play().catch(() => {});
+
+    // Mute event listener
+    const muteBtn = document.getElementById('btn-mute-audio');
+    if (muteBtn) {
+      muteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (cbtAudio) {
+          cbtAudio.muted = !cbtAudio.muted;
+          if (cbtAudio.muted) {
+            muteBtn.innerHTML = '<i data-lucide="volume-x" style="width:16px; height:16px;"></i>';
+            showToast('Musik dibisukan', 'info');
+          } else {
+            muteBtn.innerHTML = '<i data-lucide="volume-2" style="width:16px; height:16px;"></i>';
+            showToast('Musik dinyalakan', 'info');
+          }
+          lucide.createIcons();
+        }
+      });
+    }
+  }
+
+  // Background Particle Animation Canvas Injection
+  if (pkg.enableAnim) {
+    const bodyContainer = document.querySelector('.cbt-body');
+    if (bodyContainer) {
+      bodyContainer.style.position = 'relative';
+      const canvas = document.createElement('canvas');
+      canvas.id = 'cbt-animation-canvas';
+      canvas.style.position = 'absolute';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.pointerEvents = 'none';
+      canvas.style.zIndex = '0';
+      canvas.style.opacity = '0.08';
+      bodyContainer.appendChild(canvas);
+      
+      startCBTAnimation(canvas);
+    }
+  }
+
   // DOM selections inside CBT
   const timerClock = document.getElementById('cbt-timer-clock');
   const timerBox = document.getElementById('cbt-timer-mount');
@@ -3441,6 +4150,32 @@ function renderCBTScreen(packageId) {
   const numGridMount = document.getElementById('cbt-number-grid-mount');
 
   const doubtBtn = document.getElementById('btn-cbt-doubt');
+
+  // Toggle Sidebar (Show/Hide Question Numbers Grid)
+  const toggleSidebarBtn = document.getElementById('btn-toggle-sidebar');
+  const cbtSidebar = document.querySelector('.cbt-sidebar');
+  const toggleText = document.getElementById('text-toggle-sidebar');
+  let sidebarCollapsed = false;
+
+  toggleSidebarBtn.addEventListener('click', () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    if (sidebarCollapsed) {
+      cbtSidebar.classList.add('collapsed');
+      toggleText.innerText = 'Tampilkan Nomor';
+      toggleSidebarBtn.innerHTML = `
+        <i data-lucide="layout-sidebar-off" style="width:16px; height:16px;"></i>
+        <span id="text-toggle-sidebar">Tampilkan Nomor</span>
+      `;
+    } else {
+      cbtSidebar.classList.remove('collapsed');
+      toggleText.innerText = 'Sembunyikan Nomor';
+      toggleSidebarBtn.innerHTML = `
+        <i data-lucide="layout-sidebar" style="width:16px; height:16px;"></i>
+        <span id="text-toggle-sidebar">Sembunyikan Nomor</span>
+      `;
+    }
+    lucide.createIcons();
+  });
 
   // Renders the Grid of question numbers
   const renderNumberGrid = () => {
@@ -3994,5 +4729,61 @@ function renderCBTResultScreen(resultId) {
       window.MathJax.typesetPromise([listMount]).catch(err => console.error(err));
     }
   }, 100);
+}
+
+// Canvas-based background float particle animator
+function startCBTAnimation(canvas) {
+  const ctx = canvas.getContext('2d');
+  let animationFrameId;
+
+  const resize = () => {
+    if (canvas && canvas.parentElement) {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+  };
+  resize();
+  window.addEventListener('resize', resize);
+
+  const particles = [];
+  const particleCount = 20;
+
+  for (let i = 0; i < particleCount; i++) {
+    particles.push({
+      x: Math.random() * (canvas.width || 800),
+      y: Math.random() * (canvas.height || 600),
+      r: Math.random() * 30 + 15,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: (Math.random() - 0.5) * 0.3,
+      color: `hsl(${Math.random() * 360}, 65%, 80%)`
+    });
+  }
+
+  const animate = () => {
+    if (!canvas || !canvas.parentElement) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+
+      // Wrap-around boundary handling
+      if (p.x < -p.r) p.x = canvas.width + p.r;
+      if (p.x > canvas.width + p.r) p.x = -p.r;
+      if (p.y < -p.r) p.y = canvas.height + p.r;
+      if (p.y > canvas.height + p.r) p.y = -p.r;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+    });
+    animationFrameId = requestAnimationFrame(animate);
+  };
+  animate();
+
+  canvas.cleanup = () => {
+    cancelAnimationFrame(animationFrameId);
+    window.removeEventListener('resize', resize);
+  };
 }
 
