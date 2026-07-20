@@ -8,12 +8,12 @@ const DEFAULT_SEED_DATA = {
   schools: [
     {
       id: 'sch-1',
-      name: 'SMA Negeri 1 Jakarta',
-      npsn: '20107234',
+      name: 'SMA Negeri 4 Kisaran',
+      npsn: '10258512',
       logo: 'https://images.unsplash.com/photo-1592280771190-3e2e4d571952?w=150&h=150&fit=crop&q=80',
-      address: 'Jl. Budi Utomo No.7, Jakarta Pusat',
-      email: 'info@sman1jakarta.sch.id',
-      phone: '021-3849123',
+      address: 'Jl. Pondok Indah no.11 Kisaran',
+      email: 'info@sman4kisaran.sch.id',
+      phone: '0623-41157',
       academicYear: '2025/2026'
     }
   ],
@@ -21,7 +21,7 @@ const DEFAULT_SEED_DATA = {
     {
       id: 'usr-1',
       name: 'Super Admin BankSoal',
-      email: 'admin@banksoal.pro',
+      email: 'sakeerasayya@gmail.com',
       password: 'admin123',
       role: 'SUPER_ADMIN',
       schoolId: null,
@@ -1832,7 +1832,7 @@ export const db = {
     }
     records.push(record);
     this.save(table, records);
-    
+
     // Add to logs (except for logs table itself)
     if (table !== 'logs') {
       const activeUser = JSON.parse(sessionStorage.getItem('active_user') || 'null');

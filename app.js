@@ -21,7 +21,7 @@ const toastContainer = document.getElementById('toast-container');
 // Core Router
 function handleRouting() {
   activeUser = JSON.parse(sessionStorage.getItem('active_user') || 'null');
-  
+
   if (!activeUser) {
     renderLogin();
     return;
@@ -31,7 +31,7 @@ function handleRouting() {
   const hash = window.location.hash || '#dashboard';
   const page = hash.split('?')[0];
   const queryParams = parseQueryParams(hash);
-  
+
   if (page === '#cbt') {
     renderCBTScreen(queryParams.id);
   } else if (page === '#cbt-result') {
@@ -62,19 +62,19 @@ window.addEventListener('load', handleRouting);
 function showToast(message, type = 'success') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  
+
   let icon = 'info';
   if (type === 'success') icon = 'check-circle';
   if (type === 'error') icon = 'alert-triangle';
-  
+
   toast.innerHTML = `
     <i data-lucide="${icon}"></i>
     <span>${message}</span>
   `;
-  
+
   toastContainer.appendChild(toast);
   lucide.createIcons();
-  
+
   // Slide out and remove after 3s
   setTimeout(() => {
     toast.style.animation = 'slideIn 0.3s reverse forwards';
@@ -85,16 +85,16 @@ function showToast(message, type = 'success') {
 // Modal Helpers
 function openModal(htmlContent, sizeClass = '') {
   modalContent.innerHTML = htmlContent;
-  
+
   // Clear any existing sizes and apply new
   modalContent.className = 'modal-content';
   if (sizeClass) {
     modalContent.classList.add(sizeClass);
   }
-  
+
   globalModal.classList.add('active');
   lucide.createIcons();
-  
+
   // Bind close buttons
   const closeBtns = modalContent.querySelectorAll('[data-close-modal]');
   closeBtns.forEach(btn => {
@@ -136,7 +136,7 @@ function setupVisualEditor(textareaId, previewId) {
       });
     });
   }
-  
+
   updatePreview();
 }
 
@@ -145,7 +145,7 @@ function insertTextAtCursor(textarea, cmd) {
   const end = textarea.selectionEnd;
   const text = textarea.value;
   const selectedText = text.substring(start, end);
-  
+
   let replacement = '';
   switch (cmd) {
     case 'bold':
@@ -186,7 +186,7 @@ function insertTextAtCursor(textarea, cmd) {
     default:
       return;
   }
-  
+
   textarea.value = text.substring(0, start) + replacement + text.substring(end);
   textarea.focus();
   textarea.selectionStart = start + replacement.length;
@@ -212,7 +212,7 @@ function renderLogin() {
         <form id="login-form">
           <div class="form-group">
             <label class="form-label" for="login-email">Alamat Email</label>
-            <input type="email" id="login-email" class="form-input" placeholder="contoh: guru@sman1.sch.id" required>
+            <input type="email" id="login-email" class="form-input" placeholder="contoh: abukhoirmkom@sman4kisaran.sch.id" required>
           </div>
           <div class="form-group">
             <label class="form-label" for="login-password">
@@ -290,13 +290,13 @@ function renderLogin() {
 
 function attemptLogin(email, password) {
   const user = db.get('users').find(u => u.email === email && u.password === password);
-  
+
   if (user) {
     if (user.status !== 'AKTIF') {
       showToast('Akun Anda dinonaktifkan. Hubungi admin.', 'error');
       return;
     }
-    
+
     sessionStorage.setItem('active_user', JSON.stringify(user));
     db.log(user.id, user.name, 'LOGIN', 'Berhasil login ke dalam sistem.');
     showToast(`Selamat datang kembali, ${user.name}!`, 'success');
@@ -311,7 +311,7 @@ function attemptLogin(email, password) {
 // ----------------------------------------------------
 function renderAppShell(activePage, queryParams) {
   const school = db.get('schools')[0] || { name: 'BankSoalPro', npsn: '-' };
-  
+
   const menuConfig = [
     { page: '#dashboard', label: 'Dashboard', icon: 'layout-dashboard', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
     { page: '#profil-sekolah', label: 'Profil Sekolah', icon: 'school', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
@@ -340,6 +340,8 @@ function renderAppShell(activePage, queryParams) {
 
   appMount.innerHTML = `
     <div class="app-container">
+      <div class="sidebar-overlay" id="sidebar-overlay"></div>
+      
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-logo">
@@ -367,9 +369,14 @@ function renderAppShell(activePage, queryParams) {
       <!-- Main Content -->
       <div class="main-wrapper">
         <header class="header">
-          <div class="header-title-area">
-            <h1 class="header-title" id="page-display-title">Dashboard</h1>
-            <span class="header-subtitle" id="page-display-subtitle">Statistik & analisis data sistem</span>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button id="sidebar-toggle-btn" class="btn" style="display:none; padding:8px; background:none; border:1px solid var(--neutral-400); color:var(--neutral-800); border-radius:var(--radius-sm); cursor:pointer;">
+              <i data-lucide="menu" style="width:20px; height:20px;"></i>
+            </button>
+            <div class="header-title-area">
+              <h1 class="header-title" id="page-display-title">Dashboard</h1>
+              <span class="header-subtitle" id="page-display-subtitle">Statistik & analisis data sistem</span>
+            </div>
           </div>
           
           <div class="header-actions">
@@ -395,6 +402,29 @@ function renderAppShell(activePage, queryParams) {
   });
 
   lucide.createIcons();
+
+  // Bind sidebar toggle on mobile
+  const toggleBtn = document.getElementById('sidebar-toggle-btn');
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+
+  if (toggleBtn && sidebar && overlay) {
+    const toggleSidebar = () => {
+      sidebar.classList.toggle('open');
+      overlay.classList.toggle('open');
+    };
+
+    toggleBtn.addEventListener('click', toggleSidebar);
+    overlay.addEventListener('click', toggleSidebar);
+
+    // Close sidebar when clicking links
+    sidebar.querySelectorAll('.menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+      });
+    });
+  }
 
   // Render Sub page contents
   const contentMount = document.getElementById('shell-content-mount');
@@ -562,9 +592,9 @@ function renderDashboard(mount) {
               </thead>
               <tbody>
                 ${questions.slice(0, 5).map(q => {
-                  const sub = subjects.find(s => s.id === q.subjectId);
-                  const statusClass = q.status === 'APPROVED' ? 'success' : q.status === 'REVIEW' ? 'warning' : 'neutral';
-                  return `
+    const sub = subjects.find(s => s.id === q.subjectId);
+    const statusClass = q.status === 'APPROVED' ? 'success' : q.status === 'REVIEW' ? 'warning' : 'neutral';
+    return `
                     <tr>
                       <td style="font-weight: 700; color: var(--primary);">${q.code}</td>
                       <td>${sub ? sub.name : 'Umum'}</td>
@@ -573,7 +603,7 @@ function renderDashboard(mount) {
                       <td><span class="badge badge-${statusClass}">${q.status}</span></td>
                     </tr>
                   `;
-                }).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada data soal.</td></tr>'}
+  }).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada data soal.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -589,8 +619,8 @@ function renderDashboard(mount) {
         <div class="card-body" style="max-height: 310px; overflow-y: auto; padding: 12px;">
           <div style="display:flex; flex-direction:column; gap:12px;">
             ${logs.slice(0, 8).map(l => {
-              const time = new Date(l.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-              return `
+    const time = new Date(l.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    return `
                 <div style="display:flex; flex-direction:column; border-bottom: 1px solid var(--neutral-400); padding-bottom: 8px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-weight:700; font-size:13px; color: var(--neutral-900);">${l.userName}</span>
@@ -599,7 +629,7 @@ function renderDashboard(mount) {
                   <span style="font-size:12px; color: var(--neutral-700); margin-top:2px;">${l.details}</span>
                 </div>
               `;
-            }).join('') || '<p style="text-align:center; color: var(--neutral-600); font-size:13px;">Belum ada aktivitas.</p>'}
+  }).join('') || '<p style="text-align:center; color: var(--neutral-600); font-size:13px;">Belum ada aktivitas.</p>'}
           </div>
         </div>
       </div>
@@ -794,14 +824,14 @@ function renderGuru(mount) {
             </thead>
             <tbody>
               ${teachers.map(t => {
-                const subNames = (t.subjectIds || []).map(sid => {
-                  const s = subjects.find(sub => sub.id === sid);
-                  return s ? s.name : '';
-                }).filter(Boolean).join(', ') || 'Belum diatur';
+    const subNames = (t.subjectIds || []).map(sid => {
+      const s = subjects.find(sub => sub.id === sid);
+      return s ? s.name : '';
+    }).filter(Boolean).join(', ') || 'Belum diatur';
 
-                const statusClass = t.status === 'AKTIF' ? 'success' : 'danger';
+    const statusClass = t.status === 'AKTIF' ? 'success' : 'danger';
 
-                return `
+    return `
                   <tr>
                     <td>
                       <div style="font-weight:700; color: var(--neutral-900);">${t.name}</div>
@@ -822,7 +852,7 @@ function renderGuru(mount) {
                     </td>
                   </tr>
                 `;
-              }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada data guru.</td></tr>'}
+  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada data guru.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -834,7 +864,7 @@ function renderGuru(mount) {
 
   // Add click listeners
   document.getElementById('btn-tambah-guru').addEventListener('click', () => openGuruModal());
-  
+
   const editBtns = mount.querySelectorAll('.btn-edit-guru');
   editBtns.forEach(btn => {
     btn.addEventListener('click', () => openGuruModal(btn.dataset.id));
@@ -900,14 +930,14 @@ function openGuruModal(teacherId = null) {
           <label class="form-label">Mata Pelajaran yang Diajar</label>
           <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; margin-top:4px;">
             ${subjects.map(s => {
-              const isChecked = isEdit && (teacher.subjectIds || []).includes(s.id) ? 'checked' : '';
-              return `
+    const isChecked = isEdit && (teacher.subjectIds || []).includes(s.id) ? 'checked' : '';
+    return `
                 <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
                   <input type="checkbox" class="g-subject-chk" value="${s.id}" ${isChecked}>
                   <span>${s.name}</span>
                 </label>
               `;
-            }).join('')}
+  }).join('')}
           </div>
         </div>
       </div>
@@ -922,7 +952,7 @@ function openGuruModal(teacherId = null) {
 
   document.getElementById('guru-modal-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    
+
     const subjectIds = [];
     document.querySelectorAll('.g-subject-chk:checked').forEach(chk => {
       subjectIds.push(chk.value);
@@ -1058,7 +1088,7 @@ function renderKurikulum(mount) {
         </div>
       </div>
     `).join('') || '<div style="padding:20px; text-align:center; font-size:13px;">Belum ada Mata Pelajaran.</div>';
-    
+
     lucide.createIcons();
     // Bind click
     list.querySelectorAll('.structure-item').forEach(el => {
@@ -1107,7 +1137,7 @@ function renderKurikulum(mount) {
         </div>
       </div>
     `).join('') || '<div style="padding:20px; text-align:center; font-size:13px;">Belum ada Tingkat Kelas.</div>';
-    
+
     lucide.createIcons();
 
     list.querySelectorAll('.structure-item').forEach(el => {
@@ -1148,7 +1178,7 @@ function renderKurikulum(mount) {
     const list = document.getElementById('chapter-list-mount');
     const info = document.getElementById('bab-selection-info');
     const addBtn = document.getElementById('btn-add-chapter');
-    
+
     if (!selectedSubId || !selectedClsId) {
       list.innerHTML = '';
       info.style.display = 'block';
@@ -1159,7 +1189,7 @@ function renderKurikulum(mount) {
 
     const sub = db.get('subjects').find(s => s.id === selectedSubId);
     const cls = db.get('classes').find(c => c.id === selectedClsId);
-    
+
     info.style.display = 'none';
     addBtn.style.display = 'inline-flex';
     document.getElementById('bab-card-title').innerText = `Bab - ${sub.name} (Kelas ${cls.name})`;
@@ -1174,7 +1204,7 @@ function renderKurikulum(mount) {
         </div>
       </div>
     `).join('') || '<div style="padding:20px; text-align:center; font-size:13px; color:var(--neutral-600);">Belum ada Bab untuk kombinasi ini.</div>';
-    
+
     lucide.createIcons();
 
     list.querySelectorAll('.structure-item').forEach(el => {
@@ -1238,7 +1268,7 @@ function renderKurikulum(mount) {
         </div>
       </div>
     `).join('') || '<div style="padding:20px; text-align:center; font-size:13px; color:var(--neutral-600);">Belum ada Topik untuk Bab ini.</div>';
-    
+
     lucide.createIcons();
 
     list.querySelectorAll('.edit-tp').forEach(btn => {
@@ -1320,7 +1350,7 @@ function renderBankSoal(mount) {
   let filterDifficulty = '';
   let filterType = '';
   let filterStatus = '';
-  
+
   mount.innerHTML = `
     <!-- Top actions row -->
     <div class="action-row">
@@ -1371,7 +1401,7 @@ function renderBankSoal(mount) {
     // Apply filters
     if (filterKeyword) {
       const kw = filterKeyword.toLowerCase();
-      list = list.filter(q => 
+      list = list.filter(q =>
         (q.code || '').toLowerCase().includes(kw) ||
         (q.questionText || '').toLowerCase().includes(kw) ||
         (q.tag || '').toLowerCase().includes(kw)
@@ -1394,7 +1424,7 @@ function renderBankSoal(mount) {
       const mapel = subjects.find(s => s.id === q.subjectId)?.name || 'Umum';
       const kls = classes.find(c => c.id === q.classId)?.name || 'X';
       const bab = chapters.find(c => c.id === q.chapterId)?.name || 'Umum';
-      
+
       const isBookmarked = bookmarks.some(b => b.userId === activeUser.id && b.questionId === q.id);
       const starIcon = isBookmarked ? 'star-off' : 'star';
       const starClass = isBookmarked ? 'color: #ecc94b; fill: #ecc94b;' : '';
@@ -1407,10 +1437,10 @@ function renderBankSoal(mount) {
         choicesHtml = `
           <div class="choices-preview-list">
             ${Object.entries(q.choices).map(([key, text]) => {
-              const isCorrect = Array.isArray(q.correctAnswer) ? q.correctAnswer.includes(key) : q.correctAnswer === key;
-              const correctClass = isCorrect ? 'correct' : '';
-              return `<div class="choice-preview-item ${correctClass}"><strong>${key}.</strong> <span>${text}</span></div>`;
-            }).join('')}
+          const isCorrect = Array.isArray(q.correctAnswer) ? q.correctAnswer.includes(key) : q.correctAnswer === key;
+          const correctClass = isCorrect ? 'correct' : '';
+          return `<div class="choice-preview-item ${correctClass}"><strong>${key}.</strong> <span>${text}</span></div>`;
+        }).join('')}
           </div>
         `;
       } else if (q.type === 'BENAR_SALAH') {
@@ -1491,7 +1521,7 @@ function renderBankSoal(mount) {
     }).join('') || '<div class="card" style="padding:40px; text-align:center; color: var(--neutral-600);">Tidak ada soal yang cocok dengan filter pencarian.</div>';
 
     lucide.createIcons();
-    
+
     // LaTeX rendering trigger
     if (window.MathJax && window.MathJax.typesetPromise) {
       window.MathJax.typesetPromise([listMount]).catch(err => console.error(err));
@@ -1548,7 +1578,7 @@ function renderBankSoal(mount) {
       btn.addEventListener('click', () => {
         const feedback = prompt('Masukkan alasan penolakan/revisi:', 'Perlu revisi teks');
         if (feedback !== null) {
-          db.update('questions', btn.dataset.id, { status: 'REJECTED', discussion: (db.get('questions').find(q=>q.id===btn.dataset.id).discussion || '') + `<p style="color:red">Catatan Reviewer: ${feedback}</p>` });
+          db.update('questions', btn.dataset.id, { status: 'REJECTED', discussion: (db.get('questions').find(q => q.id === btn.dataset.id).discussion || '') + `<p style="color:red">Catatan Reviewer: ${feedback}</p>` });
           showToast('Soal dikembalikan untuk direvisi.', 'error');
           reloadList();
         }
@@ -1761,7 +1791,7 @@ function renderFormSoal(mount, questionId = null) {
   const updateChaptersAndTopics = (defaultChId = null, defaultTpId = null) => {
     const sId = subSelect.value;
     const cId = clsSelect.value;
-    
+
     chSelect.innerHTML = '<option value="">Pilih Bab</option>';
     tpSelect.innerHTML = '<option value="">Pilih Topik</option>';
 
@@ -1771,7 +1801,7 @@ function renderFormSoal(mount, questionId = null) {
         const isSelected = ch.id === defaultChId ? 'selected' : '';
         chSelect.innerHTML += `<option value="${ch.id}" ${isSelected}>${ch.name}</option>`;
       });
-      
+
       if (defaultChId) {
         const topics = db.get('topics').filter(t => t.chapterId === defaultChId);
         topics.forEach(tp => {
@@ -1804,25 +1834,25 @@ function renderFormSoal(mount, questionId = null) {
   const updateChoicesForm = () => {
     const type = typeSelect.value;
     const mount = document.getElementById('answers-inputs-mount');
-    
+
     let html = '';
-    
+
     if (type === 'PG') {
       html = `
         <div class="form-group">
           <label class="form-label">Tentukan Pilihan & Kunci Jawaban Benar (Radio)</label>
           <div style="display:flex; flex-direction:column; gap:12px; margin-top:8px;">
             ${['A', 'B', 'C', 'D', 'E'].map(l => {
-              const text = q.choices?.[l] || '';
-              const isChecked = q.correctAnswer === l ? 'checked' : '';
-              return `
+        const text = q.choices?.[l] || '';
+        const isChecked = q.correctAnswer === l ? 'checked' : '';
+        return `
                 <div style="display:flex; align-items:center; gap:12px;">
                   <input type="radio" name="pg-correct" value="${l}" ${isChecked} required>
                   <strong style="width:20px;">${l}.</strong>
                   <input type="text" class="form-input pg-choice-input" data-choice-key="${l}" value="${text}" placeholder="Teks opsi pilihan ${l}" required style="flex:1;">
                 </div>
               `;
-            }).join('')}
+      }).join('')}
           </div>
         </div>
       `;
@@ -1832,16 +1862,16 @@ function renderFormSoal(mount, questionId = null) {
           <label class="form-label">Tentukan Pilihan & Centang Semua Kunci Jawaban Benar (Checkbox)</label>
           <div style="display:flex; flex-direction:column; gap:12px; margin-top:8px;">
             ${['A', 'B', 'C', 'D', 'E'].map(l => {
-              const text = q.choices?.[l] || '';
-              const isChecked = Array.isArray(q.correctAnswer) && q.correctAnswer.includes(l) ? 'checked' : '';
-              return `
+        const text = q.choices?.[l] || '';
+        const isChecked = Array.isArray(q.correctAnswer) && q.correctAnswer.includes(l) ? 'checked' : '';
+        return `
                 <div style="display:flex; align-items:center; gap:12px;">
                   <input type="checkbox" class="pg-complex-chk" value="${l}" ${isChecked}>
                   <strong style="width:20px;">${l}.</strong>
                   <input type="text" class="form-input pg-complex-choice-input" data-choice-key="${l}" value="${text}" placeholder="Teks opsi pilihan ${l}" style="flex:1;">
                 </div>
               `;
-            }).join('')}
+      }).join('')}
           </div>
         </div>
       `;
@@ -1920,7 +1950,7 @@ function renderFormSoal(mount, questionId = null) {
     if (type === 'MENJODOHKAN') {
       const rowsMount = document.getElementById('matching-rows-mount');
       const addRowBtn = document.getElementById('btn-add-match-row');
-      
+
       addRowBtn.addEventListener('click', () => {
         const div = document.createElement('div');
         div.className = 'matching-pair-row';
@@ -1968,7 +1998,7 @@ function renderFormSoal(mount, questionId = null) {
 
     textPreview.innerHTML = qText || '<span style="color:#aaa;">Ketik teks pertanyaan untuk melihat pratinjau...</span>';
     choicesPreview.innerHTML = '';
-    
+
     // Preview Choices list
     if (type === 'PG') {
       const optionInputs = document.querySelectorAll('.pg-choice-input');
@@ -2066,7 +2096,7 @@ function renderFormSoal(mount, questionId = null) {
   // Run initial tools binder
   setupVisualEditor('q-text', 'preview-question-text');
   document.getElementById('q-disc').addEventListener('input', updateLivePreview);
-  
+
   // Render choices inputs initially
   updateChoicesForm();
 
@@ -2103,7 +2133,7 @@ function renderFormSoal(mount, questionId = null) {
         return;
       }
       choices = { premises, responses };
-      
+
       // Correct answers list maps premises directly to responses
       correctAnswer = premises.map((p, i) => ({ premise: p, response: responses[i] || '' }));
     } else if (type === 'ISIAN_SINGKAT') {
@@ -2278,12 +2308,12 @@ function renderImportSoal(mount) {
   const handleImportFile = (file) => {
     statusInfo.style.display = 'block';
     statusInfo.innerHTML = `<span style="color:var(--neutral-700);">Membaca file "${file.name}"...</span>`;
-    
+
     parseExcelOrCSV(file)
       .then(res => {
         const { questions, errors } = res;
         importedQuestionsList = questions;
-        
+
         statusInfo.innerHTML = `<span style="color:var(--success-text); font-weight:700;">Membaca selesai!</span>`;
         statsBadge.innerText = `${questions.length} Soal Valid Terbaca`;
 
@@ -2312,7 +2342,7 @@ function renderImportSoal(mount) {
               <td style="max-width:200px; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;">${q.questionText}</td>
             </tr>
           `).join('');
-          
+
           mappingCard.style.display = 'block';
           submitImportBtn.removeAttribute('disabled');
         } else {
@@ -2365,7 +2395,7 @@ function renderImportSoal(mount) {
       q.creatorId = activeUser.id;
       q.creatorName = activeUser.name;
       q.createdAt = new Date().toISOString();
-      
+
       db.insert('questions', q);
     });
 
@@ -2407,9 +2437,9 @@ function renderPaketSoal(mount) {
             </thead>
             <tbody>
               ${packages.map(p => {
-                const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
-                const cls = classes.find(c => c.id === p.classId)?.name || '-';
-                return `
+    const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
+    const cls = classes.find(c => c.id === p.classId)?.name || '-';
+    return `
                   <tr>
                     <td>
                       <div style="font-weight:700; color:var(--neutral-900);">${p.name}</div>
@@ -2440,7 +2470,7 @@ function renderPaketSoal(mount) {
                     </td>
                   </tr>
                 `;
-              }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada paket soal dibuat.</td></tr>'}
+  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada paket soal dibuat.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -2526,15 +2556,15 @@ function triggerExport(pkgId, type) {
         <button class="btn btn-primary" id="btn-confirm-export">Mulai Unduh</button>
       </div>
     `;
-    
+
     openModal(html);
-    
+
     document.getElementById('btn-confirm-export').addEventListener('click', () => {
       const includeAnswer = document.getElementById('chk-inc-ans').checked;
       const includeDiscussion = document.getElementById('chk-inc-disc').checked;
-      
+
       closeModal();
-      
+
       if (type === 'doc') {
         exportToWord(pkg, pkgQ, school, { includeAnswer, includeDiscussion });
         showToast('Mengekspor berkas Word...', 'success');
@@ -2559,22 +2589,22 @@ function previewPackageQuestions(pkgId) {
     </div>
     <div class="modal-body" style="display:flex; flex-direction:column; gap:20px; max-height:60vh; overflow-y:auto;" id="preview-pkg-list-mount">
       ${pkgQ.map((q, idx) => {
-        let optionsStr = '';
-        if (q.choices && (q.type === 'PG' || q.type === 'PG_KOMPLEKS')) {
-          optionsStr = `
+    let optionsStr = '';
+    if (q.choices && (q.type === 'PG' || q.type === 'PG_KOMPLEKS')) {
+      optionsStr = `
             <div class="choices-preview-list" style="margin-top:8px;">
               ${Object.entries(q.choices).map(([k, v]) => `<div><strong>${k}.</strong> ${v}</div>`).join('')}
             </div>
           `;
-        }
-        return `
+    }
+    return `
           <div style="border-bottom:1px solid var(--neutral-400); padding-bottom:16px;">
             <div style="font-weight:700; color:var(--primary); font-size:12px; margin-bottom:6px;">No ${idx + 1} | ${q.code} [${q.type}]</div>
             <div>${q.questionText}</div>
             ${optionsStr}
           </div>
         `;
-      }).join('') || '<p style="text-align:center;">Paket ini tidak memiliki soal.</p>'}
+  }).join('') || '<p style="text-align:center;">Paket ini tidak memiliki soal.</p>'}
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" data-close-modal>Tutup</button>
@@ -2769,7 +2799,7 @@ function openCreatePackageModal() {
       // Shuffle array
       const shuffled = [...sourceList].sort(() => 0.5 - Math.random());
       questionIds = shuffled.slice(0, numQ).map(q => q.id);
-      
+
       showToast(`Generator mengacak ${questionIds.length} soal yang cocok.`, 'success');
     }
 
@@ -2817,9 +2847,9 @@ function renderLogs(mount) {
               </thead>
               <tbody>
                 ${logs.map(l => {
-                  const date = new Date(l.timestamp).toLocaleDateString('id-ID');
-                  const time = new Date(l.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                  return `
+    const date = new Date(l.timestamp).toLocaleDateString('id-ID');
+    const time = new Date(l.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return `
                     <tr>
                       <td style="white-space:nowrap; color:var(--neutral-600);">${date} - ${time}</td>
                       <td style="font-weight:700;">${l.userName}</td>
@@ -2827,7 +2857,7 @@ function renderLogs(mount) {
                       <td style="color:var(--neutral-700);">${l.details}</td>
                     </tr>
                   `;
-                }).join('') || '<tr><td colspan="4" style="text-align:center;">Belum ada riwayat audit log.</td></tr>'}
+  }).join('') || '<tr><td colspan="4" style="text-align:center;">Belum ada riwayat audit log.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -2886,7 +2916,7 @@ function renderLogs(mount) {
   backupBtn.addEventListener('click', () => {
     const data = db.getAll();
     const jsonStr = JSON.stringify(data, null, 2);
-    
+
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2896,7 +2926,7 @@ function renderLogs(mount) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     db.log(activeUser.id, activeUser.name, 'BACKUP', 'Melakukan download backup database JSON.');
     showToast('File backup berhasil diunduh.', 'success');
   });
@@ -2907,15 +2937,15 @@ function renderLogs(mount) {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = function(evt) {
+      reader.onload = function (evt) {
         try {
           const parsedData = JSON.parse(evt.target.result);
-          
+
           // Basic verification
           if (parsedData.users && parsedData.questions && parsedData.schools) {
             db.saveAll(parsedData);
             showToast('Basis data dipulihkan! Hubungkan kembali sesi login.', 'success');
-            
+
             // Clear current user and force login
             sessionStorage.removeItem('active_user');
             window.location.hash = '';
@@ -2952,10 +2982,10 @@ function renderStudentDashboard(mount) {
   const subjects = db.get('subjects');
   const classes = db.get('classes');
   const results = db.get('results').filter(r => r.userId === activeUser.id);
-  
+
   // Calculate average score
-  const avgScore = results.length > 0 
-    ? Math.round(results.reduce((acc, r) => acc + r.score, 0) / results.length) 
+  const avgScore = results.length > 0
+    ? Math.round(results.reduce((acc, r) => acc + r.score, 0) / results.length)
     : 0;
 
   mount.innerHTML = `
@@ -2979,7 +3009,7 @@ function renderStudentDashboard(mount) {
       </div>
     </div>
 
-    <div style="display:grid; grid-template-columns: 2fr 1.2fr; gap:28px;">
+    <div class="student-dashboard-grid">
       <!-- Active Packages List -->
       <div class="card">
         <div class="card-header">
@@ -2999,11 +3029,11 @@ function renderStudentDashboard(mount) {
               </thead>
               <tbody>
                 ${packages.map(p => {
-                  const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
-                  const cls = classes.find(c => c.id === p.classId)?.name || '-';
-                  const qCount = (p.questionIds || []).length;
-                  
-                  return `
+    const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
+    const cls = classes.find(c => c.id === p.classId)?.name || '-';
+    const qCount = (p.questionIds || []).length;
+
+    return `
                     <tr>
                       <td>
                         <div style="font-weight: 700; color: var(--neutral-900);">${p.name}</div>
@@ -3019,7 +3049,7 @@ function renderStudentDashboard(mount) {
                       </td>
                     </tr>
                   `;
-                }).join('') || '<tr><td colspan="4" style="text-align:center; padding:40px;">Belum ada paket ujian yang dirilis oleh guru.</td></tr>'}
+  }).join('') || '<tr><td colspan="4" style="text-align:center; padding:40px;">Belum ada paket ujian yang dirilis oleh guru.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -3044,8 +3074,8 @@ function renderStudentDashboard(mount) {
               </thead>
               <tbody>
                 ${results.map(r => {
-                  const scoreColor = r.score >= 75 ? 'var(--success-text)' : 'var(--danger-text)';
-                  return `
+    const scoreColor = r.score >= 75 ? 'var(--success-text)' : 'var(--danger-text)';
+    return `
                     <tr>
                       <td>
                         <div style="font-weight: 600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:180px;" title="${r.packageName}">${r.packageName}</div>
@@ -3061,7 +3091,7 @@ function renderStudentDashboard(mount) {
                       </td>
                     </tr>
                   `;
-                }).join('') || '<tr><td colspan="3" style="text-align:center; padding:30px; color:var(--neutral-600);">Belum ada riwayat pengerjaan.</td></tr>'}
+  }).join('') || '<tr><td colspan="3" style="text-align:center; padding:30px; color:var(--neutral-600);">Belum ada riwayat pengerjaan.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -3082,7 +3112,7 @@ function renderCBTScreen(packageId) {
   const pkg = db.get('packages').find(p => p.id === packageId);
   const subjects = db.get('subjects');
   const classes = db.get('classes');
-  
+
   if (!pkg) {
     showToast('Paket ujian tidak ditemukan!', 'error');
     window.location.hash = '#dashboard';
@@ -3108,7 +3138,7 @@ function renderCBTScreen(packageId) {
   const answers = {}; // Maps questionId -> answer
   const doubtful = {}; // Maps questionId -> boolean (true if marked as doubtful)
   let timeLeft = pkgQuestions.length * 2 * 60; // 2 minutes per question in seconds
-  
+
   // Initialize answers and doubtful map
   pkgQuestions.forEach(q => {
     doubtful[q.id] = false;
@@ -3272,6 +3302,57 @@ function renderCBTScreen(packageId) {
         from { opacity: 1; }
         to { opacity: 0.6; }
       }
+      
+      /* CBT Mobile Responsive Styling */
+      @media (max-width: 768px) {
+        .cbt-header {
+          padding: 0 16px;
+          height: auto;
+          min-height: 70px;
+          flex-direction: column;
+          align-items: stretch;
+          justify-content: center;
+          gap: 12px;
+          padding-top: 12px;
+          padding-bottom: 12px;
+        }
+        .cbt-header div[style*="display:flex; flex-direction:column;"] {
+          text-align: center;
+          align-items: center;
+        }
+        .timer-display {
+          justify-content: center;
+          font-size: 16px;
+        }
+        .cbt-body {
+          flex-direction: column-reverse;
+          overflow-y: auto;
+        }
+        .cbt-content {
+          padding: 20px 16px;
+          flex: none;
+          overflow-y: visible;
+        }
+        .cbt-sidebar {
+          width: 100%;
+          border-left: none;
+          border-top: 1px solid var(--neutral-400);
+          padding: 24px 16px;
+          flex: none;
+          overflow-y: visible;
+        }
+        .cbt-question-card {
+          padding: 20px 16px;
+          min-height: auto;
+        }
+        .cbt-num-grid {
+          grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+        }
+        .cbt-option-item {
+          padding: 12px 16px;
+          font-size: 13px;
+        }
+      }
     </style>
 
     <div class="cbt-app-shell">
@@ -3372,7 +3453,7 @@ function renderCBTScreen(packageId) {
         const isAnswered = Array.isArray(ans) ? ans.length > 0 : ans !== '';
         if (isAnswered) statusClass = 'answered';
       }
-      
+
       if (doubtful[q.id]) {
         statusClass += ' doubtful';
       }
@@ -3381,7 +3462,7 @@ function renderCBTScreen(packageId) {
         <button class="cbt-num-btn ${statusClass}" data-index="${idx}">${idx + 1}</button>
       `;
     }).join('');
-    
+
     // Bind click events on numbers
     numGridMount.querySelectorAll('.cbt-num-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -3541,7 +3622,7 @@ function renderCBTScreen(packageId) {
 
     // Configure Nav buttons
     prevBtn.disabled = currentIdx === 0;
-    nextBtn.innerHTML = currentIdx === pkgQuestions.length - 1 
+    nextBtn.innerHTML = currentIdx === pkgQuestions.length - 1
       ? `<span>Selesai</span> <i data-lucide="check"></i>`
       : `<span>Soal Berikutnya</span> <i data-lucide="chevron-right"></i>`;
     lucide.createIcons();
@@ -3590,7 +3671,7 @@ function renderCBTScreen(packageId) {
   doubtBtn.addEventListener('click', () => {
     const q = pkgQuestions[currentIdx];
     doubtful[q.id] = !doubtful[q.id];
-    
+
     // Toggle active styling
     const isDoubtful = doubtful[q.id];
     if (isDoubtful) {
@@ -3609,7 +3690,7 @@ function renderCBTScreen(packageId) {
   // Submission handler
   const submitCBTPaper = () => {
     saveCurrentAnswer();
-    
+
     // Count unanswered
     let unanswered = 0;
     pkgQuestions.forEach(q => {
@@ -3618,7 +3699,7 @@ function renderCBTScreen(packageId) {
       if (!isAnswered) unanswered++;
     });
 
-    const msg = unanswered > 0 
+    const msg = unanswered > 0
       ? `Terdapat ${unanswered} soal yang belum dijawab. Apakah Anda yakin ingin menyelesaikan ujian?`
       : 'Apakah Anda yakin ingin menyelesaikan ujian dan mengirim lembar jawaban Anda?';
 
@@ -3702,7 +3783,7 @@ function renderCBTScreen(packageId) {
 
     db.insert('results', result);
     db.log(activeUser.id, activeUser.name, 'SELESAI_UJIAN', `Menyelesaikan ujian "${pkg.name}" dengan nilai ${finalScore}`);
-    
+
     showToast('Jawaban dikirim! Skor berhasil dikalkulasi.', 'success');
     window.location.hash = `#cbt-result?id=${result.id}`;
   };
@@ -3717,12 +3798,12 @@ function renderCBTScreen(packageId) {
     }
 
     timeLeft--;
-    
+
     // Format hours, minutes, seconds
     const hrs = Math.floor(timeLeft / 3600);
     const mins = Math.floor((timeLeft % 3600) / 60);
     const secs = timeLeft % 60;
-    
+
     const formatted = [
       String(hrs).padStart(2, '0'),
       String(mins).padStart(2, '0'),
@@ -3822,39 +3903,39 @@ function renderCBTResultScreen(resultId) {
           <h3 style="font-size:18px; font-weight:800; margin-bottom:16px; color:var(--neutral-900);">Tinjauan & Pembahasan Soal</h3>
           <div style="display:flex; flex-direction:column; gap:20px;" id="cbt-review-list-mount">
             ${pkgQuestions.map((q, idx) => {
-              const studAns = res.answers[q.id];
-              const isCorrect = db.get('questions').find(soal => soal.id === q.id)?.type === 'ESSAY' 
-                ? true // Self practice essays counted correct for display
-                : (q.type === 'PG_KOMPLEKS'
-                   ? [...(studAns || [])].sort().join() === [...(q.correctAnswer || [])].sort().join()
-                   : String(studAns).trim().toUpperCase() === String(q.correctAnswer).trim().toUpperCase());
+    const studAns = res.answers[q.id];
+    const isCorrect = db.get('questions').find(soal => soal.id === q.id)?.type === 'ESSAY'
+      ? true // Self practice essays counted correct for display
+      : (q.type === 'PG_KOMPLEKS'
+        ? [...(studAns || [])].sort().join() === [...(q.correctAnswer || [])].sort().join()
+        : String(studAns).trim().toUpperCase() === String(q.correctAnswer).trim().toUpperCase());
 
-              const isAnswerEmpty = Array.isArray(studAns) ? studAns.length === 0 : studAns === '';
-              
-              let statusLabelHtml = '';
-              let cardBorderColor = '';
-              if (isAnswerEmpty) {
-                statusLabelHtml = `<span class="badge badge-neutral" style="margin-bottom:8px;">KOSONG (TIDAK DIJAWAB)</span>`;
-                cardBorderColor = 'border-left: 5px solid var(--neutral-600);';
-              } else if (isCorrect) {
-                statusLabelHtml = `<span class="badge badge-success" style="margin-bottom:8px;"><i data-lucide="check" style="width:12px; height:12px; display:inline; margin-right:4px;"></i> BENAR</span>`;
-                cardBorderColor = 'border-left: 5px solid var(--success-text);';
-              } else {
-                statusLabelHtml = `<span class="badge badge-danger" style="margin-bottom:8px;"><i data-lucide="x" style="width:12px; height:12px; display:inline; margin-right:4px;"></i> SALAH</span>`;
-                cardBorderColor = 'border-left: 5px solid var(--danger);';
-              }
+    const isAnswerEmpty = Array.isArray(studAns) ? studAns.length === 0 : studAns === '';
 
-              // Format Answers strings
-              let formattedStudentAns = studAns;
-              if (Array.isArray(studAns)) formattedStudentAns = studAns.join(', ');
-              if (isAnswerEmpty) formattedStudentAns = '<em>Tidak ada jawaban</em>';
+    let statusLabelHtml = '';
+    let cardBorderColor = '';
+    if (isAnswerEmpty) {
+      statusLabelHtml = `<span class="badge badge-neutral" style="margin-bottom:8px;">KOSONG (TIDAK DIJAWAB)</span>`;
+      cardBorderColor = 'border-left: 5px solid var(--neutral-600);';
+    } else if (isCorrect) {
+      statusLabelHtml = `<span class="badge badge-success" style="margin-bottom:8px;"><i data-lucide="check" style="width:12px; height:12px; display:inline; margin-right:4px;"></i> BENAR</span>`;
+      cardBorderColor = 'border-left: 5px solid var(--success-text);';
+    } else {
+      statusLabelHtml = `<span class="badge badge-danger" style="margin-bottom:8px;"><i data-lucide="x" style="width:12px; height:12px; display:inline; margin-right:4px;"></i> SALAH</span>`;
+      cardBorderColor = 'border-left: 5px solid var(--danger);';
+    }
 
-              let formattedCorrectAns = q.correctAnswer;
-              if (Array.isArray(q.correctAnswer)) formattedCorrectAns = q.correctAnswer.join(', ');
+    // Format Answers strings
+    let formattedStudentAns = studAns;
+    if (Array.isArray(studAns)) formattedStudentAns = studAns.join(', ');
+    if (isAnswerEmpty) formattedStudentAns = '<em>Tidak ada jawaban</em>';
 
-              let optionsStr = '';
-              if (q.choices && (q.type === 'PG' || q.type === 'PG_KOMPLEKS')) {
-                optionsStr = `
+    let formattedCorrectAns = q.correctAnswer;
+    if (Array.isArray(q.correctAnswer)) formattedCorrectAns = q.correctAnswer.join(', ');
+
+    let optionsStr = '';
+    if (q.choices && (q.type === 'PG' || q.type === 'PG_KOMPLEKS')) {
+      optionsStr = `
                   <div class="choices-preview-list" style="margin-top:12px; margin-bottom:12px;">
                     ${Object.entries(q.choices).map(([k, v]) => `
                       <div class="choice-preview-item ${k === q.correctAnswer || (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(k)) ? 'correct' : ''}">
@@ -3863,9 +3944,9 @@ function renderCBTResultScreen(resultId) {
                     `).join('')}
                   </div>
                 `;
-              }
+    }
 
-              return `
+    return `
                 <div class="card" style="${cardBorderColor}">
                   <div class="card-body" style="padding:24px;">
                     ${statusLabelHtml}
@@ -3896,7 +3977,7 @@ function renderCBTResultScreen(resultId) {
                   </div>
                 </div>
               `;
-            }).join('')}
+  }).join('')}
           </div>
         </div>
 
