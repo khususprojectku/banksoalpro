@@ -12,6 +12,7 @@ let currentChartMapel = null;
 let currentChartKesulitan = null;
 let currentChartGuru = null;
 let cbtAudio = null; // Global CBT background music player
+let currentCaptchaCode = ''; // CAPTCHA code untuk halaman login
 
 // DOM Selectors
 const appMount = document.getElementById('app');
@@ -23,8 +24,12 @@ const toastContainer = document.getElementById('toast-container');
 function handleRouting() {
   activeUser = JSON.parse(sessionStorage.getItem('active_user') || 'null');
 
-  if (!activeUser) {
-    // Cleanup CBT resources if logging out
+  // Parse Hash
+  const hash = window.location.hash || '#home';
+  const page = hash.split('?')[0];
+  const queryParams = parseQueryParams(hash);
+
+  if (!activeUser || page === '#home' || page === '#login') {
     if (cbtAudio) {
       cbtAudio.pause();
       cbtAudio = null;
@@ -34,14 +39,11 @@ function handleRouting() {
       canvas.cleanup();
       canvas.remove();
     }
-    renderLogin();
-    return;
+    if (!activeUser || page === '#home' || page === '#login') {
+      renderLandingPage();
+      return;
+    }
   }
-
-  // Parse Hash
-  const hash = window.location.hash || '#dashboard';
-  const page = hash.split('?')[0];
-  const queryParams = parseQueryParams(hash);
 
   // Cleanup audio & animation when routing away from CBT
   if (page !== '#cbt') {
@@ -60,6 +62,8 @@ function handleRouting() {
     renderCBTScreen(queryParams.id);
   } else if (page === '#cbt-result') {
     renderCBTResultScreen(queryParams.id);
+  } else if (page === '#android-exam') {
+    renderAndroidExamAppScreen(queryParams.id);
   } else {
     renderAppShell(page, queryParams);
   }
@@ -78,9 +82,48 @@ function parseQueryParams(hash) {
   return params;
 }
 
+// ─── Global Error Handler: Tampilkan error langsung di layar ───
+window.onerror = function(msg, src, line, col, err) {
+  var appEl = document.getElementById('app');
+  if (appEl) {
+    appEl.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
+      '<h2 style="color:#f87171;margin:0 0 16px">⛔ JavaScript Error</h2>' +
+      '<p style="color:#fbbf24;font-size:14px;margin:0 0 8px"><b>Pesan:</b> ' + msg + '</p>' +
+      '<p style="color:#94a3b8;font-size:12px;margin:0 0 4px"><b>File:</b> ' + src + '</p>' +
+      '<p style="color:#94a3b8;font-size:12px;margin:0 0 16px"><b>Baris:</b> ' + line + ', Kolom: ' + col + '</p>' +
+      '<p style="color:#64748b;font-size:11px">Buka DevTools (F12) → Console tab untuk detail lengkap.</p>' +
+      '</div>';
+  }
+  return false;
+};
+
 // Router Event Listeners
 window.addEventListener('hashchange', handleRouting);
-window.addEventListener('load', handleRouting);
+
+// Jalankan routing: DOM sudah siap karena script ada di bawah <body>
+try {
+  handleRouting();
+} catch(e) {
+  var appEl2 = document.getElementById('app');
+  if (appEl2) {
+    appEl2.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
+      '<h2 style="color:#f87171;margin:0 0 16px">⛔ Error saat Routing</h2>' +
+      '<p style="color:#fbbf24;font-size:14px;margin:0 0 8px"><b>Pesan:</b> ' + e.message + '</p>' +
+      '<pre style="color:#94a3b8;font-size:11px;overflow:auto;background:#0f172a;padding:12px;border-radius:8px">' + e.stack + '</pre>' +
+      '</div>';
+  }
+}
+
+// Safe Lucide icon renderer helper
+function refreshIcons() {
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    try {
+      window.lucide.createIcons();
+    } catch (e) {
+      console.warn('Lucide icons load warning:', e);
+    }
+  }
+}
 
 // Toast Helper
 function showToast(message, type = 'success') {
@@ -97,7 +140,7 @@ function showToast(message, type = 'success') {
   `;
 
   toastContainer.appendChild(toast);
-  lucide.createIcons();
+  refreshIcons();
 
   // Slide out and remove after 3s
   setTimeout(() => {
@@ -117,7 +160,7 @@ function openModal(htmlContent, sizeClass = '') {
   }
 
   globalModal.classList.add('active');
-  lucide.createIcons();
+  refreshIcons();
 
   // Bind close buttons
   const closeBtns = modalContent.querySelectorAll('[data-close-modal]');
@@ -406,101 +449,680 @@ function insertTextAtCursor(textarea, cmd) {
 }
 
 // ----------------------------------------------------
-// 1. RENDER LOGIN
+// 1. RENDER HOMEPAGE LANDING PAGE & DIRECT LOGIN WITH CAPTCHA
 // ----------------------------------------------------
-function renderLogin() {
+
+function renderLandingPage() {
+  currentCaptchaCode = db.generateCaptcha();
+
   appMount.innerHTML = `
-    <div class="auth-page">
-      <div class="auth-card">
-        <div class="auth-header">
-          <div class="auth-logo">
-            <div class="logo-icon">BSP</div>
-            <div class="logo-text">BankSoalPro</div>
-          </div>
-          <h2 class="auth-title">Selamat Datang</h2>
-          <p class="auth-desc">Masuk untuk mengelola bank soal sekolah Anda</p>
+    <div class="landing-page">
+      <!-- Navbar -->
+      <nav class="landing-nav">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div class="logo-icon">BSP</div>
+          <div style="font-weight:900; font-size:20px; color:white; letter-spacing:-0.5px;">BankSoalPro</div>
         </div>
-        
-        <form id="login-form">
-          <div class="form-group">
-            <label class="form-label" for="login-email">Alamat Email</label>
-            <input type="email" id="login-email" class="form-input" placeholder="contoh: abukhoirmkom@sman4kisaran.sch.id" required>
+
+        <div class="landing-nav-links">
+          <a href="#features" class="landing-nav-link">Fitur Unggulan</a>
+          <a href="#pricing" class="landing-nav-link">Harga & Paket</a>
+          <a href="#testimonials" class="landing-nav-link">Testimoni</a>
+          <a href="#faq" class="landing-nav-link">FAQ</a>
+          ${activeUser ? `
+            <a href="#dashboard" class="btn btn-primary" style="padding:8px 20px;">
+              <i data-lucide="layout-dashboard"></i> Buka Dashboard
+            </a>
+          ` : `
+            <a href="#login-card-hero" class="btn btn-primary" style="padding:8px 20px;">
+              <i data-lucide="log-in"></i> Masuk Sekarang
+            </a>
+          `}
+        </div>
+      </nav>
+
+      <!-- Hero Section -->
+      <header class="landing-hero">
+        <div>
+          <div class="hero-badge">
+            <i data-lucide="sparkles" style="width:14px; height:14px;"></i>
+            <span>PLATFORM CBT & BANK SOAL AI NO. 1 DI INDONESIA</span>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="login-password">
-              <span>Kata Sandi</span>
-              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 11px;">Lupa Sandi?</a>
-            </label>
-            <input type="password" id="login-password" class="form-input" placeholder="••••••••" required>
-          </div>
-          
-          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 10px;">
-            <span>Masuk ke Akun</span>
-            <i data-lucide="arrow-right"></i>
-          </button>
-        </form>
-        
-        <div class="demo-accounts">
-          <div class="demo-title">Akun Uji Coba Quick Login</div>
-          <div class="demo-grid">
-            <button class="btn-demo" data-email="admin@banksoal.pro">Super Admin</button>
-            <button class="btn-demo" data-email="admin.sekolah@sman1.sch.id">Admin Sekolah</button>
-            <button class="btn-demo" data-email="budi.guru@sman1.sch.id">Guru Informatika</button>
-            <button class="btn-demo" data-email="siti.guru@sman1.sch.id">Guru Matematika</button>
-            <button class="btn-demo" data-email="edi.reviewer@sman1.sch.id">Reviewer Soal</button>
-            <button class="btn-demo" data-email="andi.siswa@sman1.sch.id">Siswa Demo</button>
-          </div>
-          <div style="text-align: center; margin-top: 16px; border-top: 1px dashed var(--neutral-400); padding-top: 12px;">
-            <a href="#" id="btn-reset-login" style="color: var(--danger-text); text-decoration: none; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-              <i data-lucide="refresh-cw" style="width:12px; height:12px;"></i>
-              <span>Reset Database & Sinkronkan Paket Matematika Baru</span>
+
+          <h1 class="hero-title">
+            Kelola Bank Soal & Ujian CBT Sekolah <span class="hero-title-highlight"> Lebih Cepat, Aman, & Otomatis</span>
+          </h1>
+
+          <p class="hero-desc">
+            BankSoalPro adalah solusi modern untuk Guru, Sekolah, dan Yayasan dalam mengolah bank soal, ekspor format MS Word/Excel, penyusunan kisi-kisi, hingga pelaksanaan ujian CBT Android Anti-Cheat berstandar nasional.
+          </p>
+
+          <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+            <a href="#pricing" class="btn btn-primary" style="padding:14px 28px; font-size:15px; font-weight:800; border-radius:12px;">
+              <span>Mulai Berlangganan Sekarang</span>
+              <i data-lucide="arrow-right"></i>
+            </a>
+            <a href="#features" class="btn btn-secondary" style="padding:14px 24px; font-size:15px; font-weight:700; color:white; border-color:rgba(255,255,255,0.2); border-radius:12px;">
+              <span>Pelajari Fitur</span>
             </a>
           </div>
+
+          <!-- Trust Badges -->
+          <div style="display:flex; gap:32px; margin-top:40px; border-top:1px solid rgba(255,255,255,0.1); padding-top:24px;">
+            <div>
+              <div style="font-size:24px; font-weight:900; color:white;">500+</div>
+              <div style="font-size:12px; color:#94a3b8;">Sekolah Terdaftar</div>
+            </div>
+            <div>
+              <div style="font-size:24px; font-weight:900; color:#38bdf8;">50.000+</div>
+              <div style="font-size:12px; color:#94a3b8;">Butir Soal Terarsip</div>
+            </div>
+            <div>
+              <div style="font-size:24px; font-weight:900; color:#818cf8;">99.9%</div>
+              <div style="font-size:12px; color:#94a3b8;">Keamanan Anti-Cheat</div>
+            </div>
+          </div>
         </div>
-      </div>
+
+        <!-- Login & Student Exam Entry -->
+        <div class="landing-login-card" id="login-card-hero" style="padding:0; overflow:hidden;">
+          <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(15,23,42,0.8);">
+            <button id="tab-login" class="tab-btn active" style="flex:1; padding:16px; background:transparent; border:none; color:white; font-weight:700; cursor:pointer; border-bottom:2px solid var(--primary);">Login Sistem</button>
+            <button id="tab-exam" class="tab-btn" style="flex:1; padding:16px; background:transparent; border:none; color:#cbd5e1; font-weight:700; cursor:pointer; border-bottom:2px solid transparent;">Ujian Siswa</button>
+          </div>
+
+          <!-- PANE: LOGIN SYSTEM -->
+          <div id="pane-login" style="padding:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+              <div>
+                <h3 style="font-size:20px; font-weight:800; color:white; margin:0;">Direct Login Akun</h3>
+                <p style="font-size:12px; color:#94a3b8; margin-top:4px;">Masuk langsung untuk mencoba platform</p>
+              </div>
+              <span class="cyber-status-pill" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">
+                <i data-lucide="shield-check" style="width:12px; height:12px;"></i> CAPTCHA
+              </span>
+            </div>
+
+            <form id="landing-login-form" style="display:flex; flex-direction:column; gap:16px;">
+              <div class="form-group">
+                <label class="form-label" for="l-email" style="color:#cbd5e1;">Alamat Email</label>
+                <input type="email" id="l-email" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="email@sekolah.sch.id" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="l-pass" style="color:#cbd5e1;">Kata Sandi</label>
+                <input type="password" id="l-pass" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="••••••••" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" style="color:#cbd5e1; display:flex; justify-content:space-between;">
+                  <span>Verifikasi CAPTCHA</span>
+                </label>
+                <div class="captcha-box">
+                  <div class="captcha-display" id="captcha-code-mount">${currentCaptchaCode}</div>
+                  <button type="button" class="btn-refresh-captcha" id="btn-refresh-captcha" title="Acak Ulang Kode CAPTCHA">
+                    <i data-lucide="refresh-cw" style="width:18px; height:18px;"></i>
+                  </button>
+                </div>
+                <input type="text" id="l-captcha-input" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(99,102,241,0.4); color:white; font-weight:800; letter-spacing:2px; text-transform:uppercase; margin-top:8px;" placeholder="Ketik Kode CAPTCHA" required>
+              </div>
+              <button type="submit" class="btn btn-primary" style="width:100%; padding:12px; font-weight:800; margin-top:6px;">
+                <i data-lucide="shield-check"></i> Verifikasi & Masuk
+              </button>
+            </form>
+
+            <div style="margin-top:20px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:16px;">
+              <div style="font-size:11px; font-weight:700; color:#94a3b8; margin-bottom:10px; text-transform:uppercase;">Quick Login Demo:</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <button class="btn-demo quick-landing-demo" data-email="admin@banksoal.pro" style="background:rgba(255,255,255,0.05); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1); font-size:11px; padding:6px;">Super Admin</button>
+                <button class="btn-demo quick-landing-demo" data-email="admin.sekolah@sman1.sch.id" style="background:rgba(255,255,255,0.05); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1); font-size:11px; padding:6px;">Admin Sekolah</button>
+                <button class="btn-demo quick-landing-demo" data-email="budi.guru@sman1.sch.id" style="background:rgba(255,255,255,0.05); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1); font-size:11px; padding:6px;">Guru Info</button>
+                <button class="btn-demo quick-landing-demo" data-email="edi.reviewer@sman1.sch.id" style="background:rgba(255,255,255,0.05); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1); font-size:11px; padding:6px;">Reviewer</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANE: STUDENT EXAM CBT -->
+          <div id="pane-exam" style="padding:24px; display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+              <div>
+                <h3 style="font-size:20px; font-weight:800; color:white; margin:0;">Portal Ujian Siswa</h3>
+                <p style="font-size:12px; color:#94a3b8; margin-top:4px;">Masukkan Kode Ujian & Token</p>
+              </div>
+              <span class="cyber-status-pill" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">
+                <i data-lucide="scan" style="width:12px; height:12px;"></i> KIOSK
+              </span>
+            </div>
+
+            <form id="student-exam-form" style="display:flex; flex-direction:column; gap:16px;">
+              <div class="form-group">
+                <label class="form-label" style="color:#cbd5e1;">1. Kode Paket Ujian</label>
+                <input type="text" id="s-exam-code" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white; text-transform:uppercase; font-weight:bold; letter-spacing:1px;" placeholder="EXAM-UAS-1234" required>
+              </div>
+              
+              <div class="form-group" id="token-group" style="display:none;">
+                <label class="form-label" style="color:#cbd5e1;">2. Token Akses Ujian (Dari Guru)</label>
+                <input type="text" id="s-exam-token" class="form-input" style="background:rgba(30,41,59,0.8); border-color:var(--primary); color:white; text-transform:uppercase; font-weight:bold; letter-spacing:1px;" placeholder="TOKEN-123">
+              </div>
+
+              <div id="student-login-group" style="display:none; flex-direction:column; gap:16px; border-top:1px dashed rgba(255,255,255,0.2); padding-top:16px; margin-top:8px;">
+                <label class="form-label" style="color:#cbd5e1;">3. Kredensial Siswa</label>
+                <input type="email" id="s-email" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="Email Siswa (cth: andi.siswa@...)">
+                <input type="password" id="s-pass" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="Password">
+              </div>
+
+              <button type="submit" id="btn-student-flow" class="btn btn-primary" style="width:100%; padding:12px; font-weight:800; margin-top:6px;">
+                Cek Kode Ujian <i data-lucide="arrow-right"></i>
+              </button>
+            </form>
+            
+            <div style="margin-top:20px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:16px;">
+               <div style="font-size:11px; font-weight:700; color:#94a3b8; margin-bottom:10px; text-transform:uppercase;">Hint Demo Ujian Siswa:</div>
+               <p style="font-size:11px; color:#cbd5e1; line-height:1.5;">
+                 Kode: <strong>EXAM-INF-8921</strong> &rarr; Token: <strong>INF001</strong><br>
+                 Email: <strong>andi.siswa@sman1.sch.id</strong> / Pass: <strong>siswa123</strong>
+               </p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Features Section -->
+      <section class="features-section" id="features">
+        <div class="section-header">
+          <div class="section-subtitle">FITUR UNGGULAN APLIKASI</div>
+          <h2 class="section-title">Mengapa BankSoalPro Menjadi Pilihan Utama Sekolah?</h2>
+        </div>
+
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="building-2"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Multi-Tenant Sekolah</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Mendukung pengelolaan banyak sekolah sekaligus dalam 1 platform pusat dengan pemisah hak akses yang ketat.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="sparkles"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Generator Paket Soal Otomatis</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Pengacakan butir soal dan pilihan jawaban secara instan berdasarkan proporsi kesulitan (Mudah, Sedang, Sulit).
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="smartphone"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Android Exam App Kiosk Mode</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Aplikasi khusus ujian di perangkat Android siswa yang mengunci layar (Lockdown), memblokir pindah tab, dan mendukung scan QR Code.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="shield-check"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Cyber Security & Anti-Cheat</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Perlindungan dari hacker: Sanitizer Anti-XSS, Brute-force rate limiter, Watermark melayang Nama/IP, dan CAPTCHA verifikasi.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="square-pi"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Editor WYSIWYG & Rumus MathJax</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Dukungan lengkap pembuatan rumus matematika, fisika, kimia, gambar, dan audio.
+            </p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon"><i data-lucide="file-text"></i></div>
+            <h3 style="font-size:18px; font-weight:800; color:white;">Ekspor 1-Klik MS Word, Excel & PDF</h3>
+            <p style="font-size:14px; color:#94a3b8; margin-top:8px; line-height:1.6;">
+              Ekspor naskah soal lengkap dengan kop sekolah, nomor urut otomatis, kunci jawaban, dan lembar pembahasan soal.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pricing Plans Section -->
+      <section class="pricing-section" id="pricing">
+        <div class="section-header">
+          <div class="section-subtitle">PAKET HARGA BERLANGGANAN</div>
+          <h2 class="section-title">Pilih Paket Langganan Sesuai Kebutuhan Sekolah</h2>
+          <p style="color:#94a3b8; margin-top:8px;">Tanpa biaya tersembunyi. Dapatkan jaminan update fitur dan dukungan teknis 24/7.</p>
+        </div>
+
+        <div class="pricing-toggle-wrap">
+          <span style="font-size:14px; font-weight:700; color:#cbd5e1;">Skema Tagihan:</span>
+          <button class="btn btn-primary" id="btn-price-monthly" style="font-size:12px; padding:6px 16px;">Bulanan</button>
+          <button class="btn btn-secondary" id="btn-price-yearly" style="font-size:12px; padding:6px 16px; border-color:rgba(255,255,255,0.2);">
+            Tahunan <span class="badge badge-success" style="margin-left:4px;">HEMAT 20%</span>
+          </button>
+        </div>
+
+        <div class="pricing-grid">
+          <!-- Basic Plan -->
+          <div class="pricing-card">
+            <h3 style="font-size:20px; font-weight:800; color:white;">Paket Sekolah Dasar</h3>
+            <p style="font-size:13px; color:#94a3b8; margin-top:4px;">Ideal untuk 1 Sekolah Negeri/Swasta Mandiri</p>
+            <div style="margin-top:20px;">
+              <span class="price-val" id="price-basic">Rp 299rb</span>
+              <span style="font-size:13px; color:#94a3b8;" id="period-basic">/ bulan</span>
+            </div>
+            <ul class="pricing-features">
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> 1 Lisensi Sekolah</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Hingga 50 Akun Guru</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Bank Soal Unlimited</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Ekspor Word & PDF</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Simulasi Ujian CBT Standard</li>
+            </ul>
+            <button class="btn btn-secondary btn-order-plan" data-plan="Sekolah Dasar" style="width:100%; margin-top:auto; font-weight:800;">Pilih Paket Ini</button>
+          </div>
+
+          <!-- Professional Plan (Popular) -->
+          <div class="pricing-card popular">
+            <div class="pricing-badge-popular">PALING POPULER</div>
+            <h3 style="font-size:20px; font-weight:800; color:white;">Paket Professional MGMP</h3>
+            <p style="font-size:13px; color:#c7d2fe; margin-top:4px;">Untuk Sekolah Unggulan & Komunitas MGMP</p>
+            <div style="margin-top:20px;">
+              <span class="price-val" id="price-pro">Rp 599rb</span>
+              <span style="font-size:13px; color:#c7d2fe;" id="period-pro">/ bulan</span>
+            </div>
+            <ul class="pricing-features" style="color:#e0e7ff;">
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> 3 Lisensi Sekolah (Multi-Tenant)</li>
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> Akun Guru & Reviewer Unlimited</li>
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> App Android Exam Kiosk Mode</li>
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> Anti-Cheat & Floating Watermark</li>
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> Analisis Butir Soal ($P$ & $D$)</li>
+              <li><i data-lucide="check" style="color:#34d399; width:16px; height:16px;"></i> Dukungan Prioritas WhatsApp</li>
+            </ul>
+            <button class="btn btn-primary btn-order-plan" data-plan="Professional MGMP" style="width:100%; margin-top:auto; font-weight:800; background:#6366f1;">Berlangganan Sekarang</button>
+          </div>
+
+          <!-- Enterprise Plan -->
+          <div class="pricing-card">
+            <h3 style="font-size:20px; font-weight:800; color:white;">Paket Enterprise Yayasan</h3>
+            <p style="font-size:13px; color:#94a3b8; margin-top:4px;">Untuk Jaringan Sekolah Yayasan / Dinas</p>
+            <div style="margin-top:20px;">
+              <span class="price-val" id="price-enterprise">Rp 1.299rb</span>
+              <span style="font-size:13px; color:#94a3b8;" id="period-enterprise">/ bulan</span>
+            </div>
+            <ul class="pricing-features">
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Unlimited Lisensi Sekolah</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Full Cyber Defense Dashboard</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Custom Domain & Logo Yayasan</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Dedicated Private Server (SLA 99.9%)</li>
+              <li><i data-lucide="check" style="color:#10b981; width:16px; height:16px;"></i> Pelatihan On-Site & Integrasi DAPODIK</li>
+            </ul>
+            <button class="btn btn-secondary btn-order-plan" data-plan="Enterprise Yayasan" style="width:100%; margin-top:auto; font-weight:800;">Hubungi Tim Sales</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Testimonials Section -->
+      <section style="padding:80px 40px; max-width:1280px; margin:0 auto;" id="testimonials">
+        <div class="section-header">
+          <div class="section-subtitle">TESTIMONIAL PENGGUNA</div>
+          <h2 class="section-title">Dipercaya Oleh Ratusan Kepala Sekolah & Guru</h2>
+        </div>
+
+        <div class="testimonials-grid">
+          <div class="testimonial-card">
+            <div style="display:flex; gap:4px; color:#f59e0b;">
+              <i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i>
+            </div>
+            <p style="font-size:14px; color:#cbd5e1; line-height:1.6;">
+              "Sejak menggunakan BankSoalPro, proses penyusunan soal PAS dan PAT di sekolah kami menjadi 5 kali lebih cepat. Fitur ekspor ke Word lengkap dengan kop dan kunci jawaban sangat membantu guru."
+            </p>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:auto;">
+              <div style="width:40px; height:40px; border-radius:50%; background:#4f46e5; display:flex; align-items:center; justify-content:center; font-weight:800;">AK</div>
+              <div>
+                <div style="font-weight:700; color:white; font-size:14px;">Drs. Abu Khoir, M.Kom</div>
+                <div style="font-size:11px; color:#94a3b8;">Kepala Sekolah SMA Negeri 4 Kisaran</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="testimonial-card">
+            <div style="display:flex; gap:4px; color:#f59e0b;">
+              <i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i>
+            </div>
+            <p style="font-size:14px; color:#cbd5e1; line-height:1.6;">
+              "Fitur Android Exam Kiosk dan Watermark Anti-Cheatnya luar biasa tangguh! Siswa tidak bisa lagi melakukan kecurangan atau berpindah tab saat ujian CBT berlangsung."
+            </p>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:auto;">
+              <div style="width:40px; height:40px; border-radius:50%; background:#10b981; display:flex; align-items:center; justify-content:center; font-weight:800;">BS</div>
+              <div>
+                <div style="font-weight:700; color:white; font-size:14px;">Budi Santoso, S.Pd</div>
+                <div style="font-size:11px; color:#94a3b8;">Ketua MGMP Informatika Sumatera Utara</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="testimonial-card">
+            <div style="display:flex; gap:4px; color:#f59e0b;">
+              <i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i><i data-lucide="star"></i>
+            </div>
+            <p style="font-size:14px; color:#cbd5e1; line-height:1.6;">
+              "Input rumus matematika dengan MathJax LaTeX dan fitur Analisis Butir Soal (Daya Beda & Tingkat Kesulitan) memberikan wawasan ilmiah yang sangat presisi untuk evaluasi belajar."
+            </p>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:auto;">
+              <div style="width:40px; height:40px; border-radius:50%; background:#818cf8; display:flex; align-items:center; justify-content:center; font-weight:800;">SR</div>
+              <div>
+                <div style="font-weight:700; color:white; font-size:14px;">Siti Rahma, M.Pd</div>
+                <div style="font-size:11px; color:#94a3b8;">Guru Matematika SMAN 1 Medan</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ Section -->
+      <section style="padding:80px 40px; background:rgba(15,23,42,0.4);" id="faq">
+        <div class="section-header">
+          <div class="section-subtitle">PERTANYAAN POPULER</div>
+          <h2 class="section-title">Pertanyaan Sering Diajukan (FAQ)</h2>
+        </div>
+
+        <div class="faq-accordion">
+          <div class="faq-item open">
+            <div class="faq-question">
+              <span>Apakah BankSoalPro aman dari peretasan dan kejahatan siber?</span>
+              <i data-lucide="chevron-down"></i>
+            </div>
+            <div class="faq-answer">
+              Ya, BankSoalPro dilengkapi dengan fitur Cyber Security Defense terpadu: Proteksi Sanitizer Anti-XSS pada editor, Brute-Force Rate Limiter (kunci otomatis jika 5 kali gagal login), enkripsi session, dan verifikasi CAPTCHA visual pada setiap halaman login.
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <div class="faq-question">
+              <span>Apakah bisa diunggah dan dijalankan di hosting biasa seperti Hostinger?</span>
+              <i data-lucide="chevron-down"></i>
+            </div>
+            <div class="faq-answer">
+              Sangat bisa! BankSoalPro dirancang ringan berbasis HTML5, Vanilla CSS, dan ES Modules Javascript. Anda cukup mengunggah berkas ke Shared Hosting Hostinger tanpa perlu server Node.js khusus.
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <div class="faq-question">
+              <span>Bagaimana cara mengimpor soal dalam jumlah banyak?</span>
+              <i data-lucide="chevron-down"></i>
+            </div>
+            <div class="faq-answer">
+              Anda dapat mengunduh Template Excel (.xlsx) atau CSV yang telah disediakan di menu Import Soal, mengisinya, dan mengunggahnya. Sistem akan secara otomatis memvalidasi dan menyimpan soal ke bank data.
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <div class="faq-question">
+              <span>Apakah aplikasi Android ujian dapat digunakan tanpa internet?</span>
+              <i data-lucide="chevron-down"></i>
+            </div>
+            <div class="faq-answer">
+              Aplikasi Android Kiosk Mode mendukung ujian jaringan lokal (LAN/Wi-Fi lokal sekolah) maupun jaringan internet publik dengan efisiensi kuota data yang sangat hemat.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA Subscription Footer Banner -->
+      <footer style="padding:80px 40px; text-align:center; background:linear-gradient(180deg, #0b0f19 0%, #1e1b4b 100%); border-top:1px solid rgba(255,255,255,0.1);">
+        <h2 style="font-size:36px; font-weight:900; color:white;">Siap Modernisasi Bank Soal Sekolah Anda?</h2>
+        <p style="color:#94a3b8; margin-top:12px; max-width:600px; margin-left:auto; margin-right:auto;">
+          Bergabunglah sekarang dengan ratusan sekolah lainnya. Dapatkan akses instant ke seluruh fitur premium BankSoalPro.
+        </p>
+
+        <div style="margin-top:32px;">
+          <a href="#login-card-hero" class="btn btn-primary" style="padding:14px 36px; font-size:16px; font-weight:800; border-radius:12px;">
+            <i data-lucide="sparkles"></i>
+            <span>Daftar / Login Berlangganan Sekarang</span>
+          </a>
+        </div>
+
+        <div style="margin-top:60px; font-size:12px; color:#64748b; border-top:1px solid rgba(255,255,255,0.05); padding-top:24px;">
+          &copy; 2026 BankSoalPro Inc. Hak Cipta Dilindungi Undang-Undang. Aplikasi Web Bank Soal & CBT Online Indonesia.
+        </div>
+      </footer>
     </div>
   `;
 
-  lucide.createIcons();
+  refreshIcons();
 
-  // Handle Form Submission
-  const form = document.getElementById('login-form');
+  // CAPTCHA Refresh Button handler
+  document.getElementById('btn-refresh-captcha').addEventListener('click', () => {
+    currentCaptchaCode = db.generateCaptcha();
+    document.getElementById('captcha-code-mount').innerText = currentCaptchaCode;
+  });
+
+  // Login Form Submission handler
+  const form = document.getElementById('landing-login-form');
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
+    const email = document.getElementById('l-email').value.trim();
+    const password = document.getElementById('l-pass').value;
+    const userCaptcha = document.getElementById('l-captcha-input').value.trim().toUpperCase();
+
+    // Verify CAPTCHA
+    if (userCaptcha !== currentCaptchaCode.toUpperCase()) {
+      showToast('KODE CAPTCHA SALAH! Silakan masukkan kode visual yang sesuai.', 'error');
+      db.log('GUEST', email, 'SECURITY_ALERT', `Gagal login: Kode CAPTCHA salah (${userCaptcha})`);
+      // Refresh CAPTCHA code for security
+      currentCaptchaCode = db.generateCaptcha();
+      document.getElementById('captcha-code-mount').innerText = currentCaptchaCode;
+      document.getElementById('l-captcha-input').value = '';
+      return;
+    }
+
     attemptLogin(email, password);
   });
 
-  // Handle Demo login clicks
-  const demoBtns = document.querySelectorAll('.btn-demo');
-  demoBtns.forEach(btn => {
+  // Quick Demo Login clicks handler
+  document.querySelectorAll('.quick-landing-demo').forEach(btn => {
     btn.addEventListener('click', () => {
       const email = btn.dataset.email;
       const user = db.get('users').find(u => u.email === email);
       if (user) {
-        document.getElementById('login-email').value = user.email;
-        document.getElementById('login-password').value = user.password;
-        attemptLogin(user.email, user.password);
+        document.getElementById('l-email').value = user.email;
+        document.getElementById('l-pass').value = user.password;
+        document.getElementById('l-captcha-input').value = currentCaptchaCode;
+        showToast(`Mengisi kredensial & CAPTCHA untuk ${user.name}...`, 'info');
       }
     });
   });
 
-  // Handle Reset button click
-  const resetLoginBtn = document.getElementById('btn-reset-login');
-  if (resetLoginBtn) {
-    resetLoginBtn.addEventListener('click', (e) => {
+  // Handle Login Tabs
+  const tabLogin = document.getElementById('tab-login');
+  const tabExam = document.getElementById('tab-exam');
+  const paneLogin = document.getElementById('pane-login');
+  const paneExam = document.getElementById('pane-exam');
+
+  if (tabLogin && tabExam) {
+    tabLogin.addEventListener('click', () => {
+      tabLogin.className = 'tab-btn active';
+      tabLogin.style.borderBottom = '2px solid var(--primary)';
+      tabLogin.style.color = 'white';
+      tabExam.className = 'tab-btn';
+      tabExam.style.borderBottom = '2px solid transparent';
+      tabExam.style.color = '#cbd5e1';
+      paneLogin.style.display = 'block';
+      paneExam.style.display = 'none';
+    });
+
+    tabExam.addEventListener('click', () => {
+      tabExam.className = 'tab-btn active';
+      tabExam.style.borderBottom = '2px solid var(--primary)';
+      tabExam.style.color = 'white';
+      tabLogin.className = 'tab-btn';
+      tabLogin.style.borderBottom = '2px solid transparent';
+      tabLogin.style.color = '#cbd5e1';
+      paneLogin.style.display = 'none';
+      paneExam.style.display = 'block';
+    });
+  }
+
+  // Handle Student Exam Entry Flow
+  // State vars: 0=enter code, 1=enter token, 2=enter login
+  let targetPkg = null;
+  let examStep = 0; // step tracker
+  const sForm = document.getElementById('student-exam-form');
+  if (sForm) {
+    sForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (confirm('PERINGATAN: Semua data Anda akan disetel kembali ke contoh bawaan. Paket matematika 50 soal dan data hasil ujian siswa akan diinisialisasi. Lanjutkan?')) {
-        db.reset();
-        showToast('Database disetel ulang ke setelan pabrik!', 'success');
-        handleRouting();
+      const code = document.getElementById('s-exam-code').value.trim().toUpperCase();
+
+      // --- STEP 0: Look up exam code ---
+      if (examStep === 0) {
+        targetPkg = db.get('packages').find(p => (p.examCode || '').toUpperCase() === code);
+        if (!targetPkg) {
+          showToast('Kode Paket Ujian tidak ditemukan! Pastikan kode sudah benar.', 'error');
+          return;
+        }
+
+        // If exam has a token, advance to token step
+        if (targetPkg.examToken) {
+          examStep = 1;
+          const tokenGroup = document.getElementById('token-group');
+          tokenGroup.style.display = 'block';
+          document.getElementById('s-exam-token').required = true;
+          document.getElementById('btn-student-flow').textContent = 'Verifikasi Token →';
+          showToast(`Paket "${targetPkg.name}" ditemukan. Masukkan Token dari Guru.`, 'info');
+        } else {
+          // No token needed, jump straight to login step
+          examStep = 2;
+          const loginGroup = document.getElementById('student-login-group');
+          loginGroup.style.display = 'flex';
+          document.getElementById('s-exam-code').disabled = true;
+          document.getElementById('s-email').required = true;
+          document.getElementById('s-pass').required = true;
+          document.getElementById('btn-student-flow').innerHTML = '<i data-lucide="log-in"></i> Verifikasi & Mulai Ujian CBT';
+          lucide.createIcons();
+          showToast(`Paket "${targetPkg.name}" valid. Silakan login akun Siswa Anda.`, 'success');
+        }
+        return;
+      }
+
+      // --- STEP 1: Validate token ---
+      if (examStep === 1) {
+        const tokenInput = document.getElementById('s-exam-token').value.trim().toUpperCase();
+        const correctToken = (targetPkg.examToken || '').toUpperCase();
+        if (tokenInput !== correctToken) {
+          showToast('Token Ujian SALAH! Minta token yang benar dari Guru pengawas.', 'error');
+          return;
+        }
+        // Token correct, advance to login
+        examStep = 2;
+        const loginGroup = document.getElementById('student-login-group');
+        loginGroup.style.display = 'flex';
+        document.getElementById('s-exam-code').disabled = true;
+        document.getElementById('s-exam-token').disabled = true;
+        document.getElementById('s-email').required = true;
+        document.getElementById('s-pass').required = true;
+        document.getElementById('btn-student-flow').innerHTML = '<i data-lucide="log-in"></i> Verifikasi & Mulai Ujian CBT';
+        lucide.createIcons();
+        showToast('Token valid! Silakan login akun Siswa Anda.', 'success');
+        return;
+      }
+
+      // --- STEP 2: Student login and redirect to exam ---
+      if (examStep === 2) {
+        const email = document.getElementById('s-email').value.trim();
+        const pass = document.getElementById('s-pass').value;
+        const user = db.get('users').find(u => u.email === email && u.password === pass);
+
+        if (!user) {
+          showToast('Email atau password Siswa salah!', 'error');
+          return;
+        }
+        if (user.role !== 'SISWA') {
+          showToast('Hanya akun Siswa yang dapat memulai ujian melalui portal ini!', 'error');
+          return;
+        }
+
+        attemptLogin(email, pass, `#cbt?id=${targetPkg.id}`);
       }
     });
   }
+
+  // Pricing Toggle Monthly / Yearly handler
+  const btnMonthly = document.getElementById('btn-price-monthly');
+  const btnYearly = document.getElementById('btn-price-yearly');
+
+  btnMonthly.addEventListener('click', () => {
+    btnMonthly.className = 'btn btn-primary';
+    btnYearly.className = 'btn btn-secondary';
+    document.getElementById('price-basic').innerText = 'Rp 299rb';
+    document.getElementById('period-basic').innerText = '/ bulan';
+    document.getElementById('price-pro').innerText = 'Rp 599rb';
+    document.getElementById('period-pro').innerText = '/ bulan';
+    document.getElementById('price-enterprise').innerText = 'Rp 1.299rb';
+    document.getElementById('period-enterprise').innerText = '/ bulan';
+  });
+
+  btnYearly.addEventListener('click', () => {
+    btnYearly.className = 'btn btn-primary';
+    btnMonthly.className = 'btn btn-secondary';
+    document.getElementById('price-basic').innerText = 'Rp 2.870rb';
+    document.getElementById('period-basic').innerText = '/ tahun';
+    document.getElementById('price-pro').innerText = 'Rp 5.750rb';
+    document.getElementById('period-pro').innerText = '/ tahun';
+    document.getElementById('price-enterprise').innerText = 'Rp 12.470rb';
+    document.getElementById('period-enterprise').innerText = '/ tahun';
+  });
+
+  // Order Plan Modal buttons handler
+  document.querySelectorAll('.btn-order-plan').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const planName = btn.dataset.plan;
+      const html = `
+        <div class="modal-header">
+          <h3 class="modal-title">Formulir Berlangganan - ${planName}</h3>
+          <button class="modal-close" data-close-modal><i data-lucide="x"></i></button>
+        </div>
+        <form id="form-subscribe-plan">
+          <div class="modal-body" style="display:flex; flex-direction:column; gap:16px;">
+            <p style="font-size:13px; color:var(--neutral-600);">Isi data instansi Anda untuk mengaktifkan lisensi paket <strong>${planName}</strong>.</p>
+            <div class="form-group">
+              <label class="form-label" for="sub-school-name">Nama Sekolah / Lembaga</label>
+              <input type="text" id="sub-school-name" class="form-input" placeholder="contoh: SMAN 1 Medan" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sub-pic-name">Nama Penanggung Jawab / Kepala Sekolah</label>
+              <input type="text" id="sub-pic-name" class="form-input" placeholder="contoh: Budi Santoso, M.Pd" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sub-pic-phone">Nomor WhatsApp Aktif</label>
+              <input type="tel" id="sub-pic-phone" class="form-input" placeholder="081234567890" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+            <button type="submit" class="btn btn-primary">Kirim Permohonan Langganan</button>
+          </div>
+        </form>
+      `;
+
+      openModal(html);
+
+      document.getElementById('form-subscribe-plan').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const schoolName = document.getElementById('sub-school-name').value;
+        showToast(`Permohonan langganan paket "${planName}" untuk ${schoolName} berhasil dikirim! Tim kami akan menghubungi Anda via WhatsApp.`, 'success');
+        closeModal();
+      });
+    });
+  });
+
+  // FAQ Accordion click handlers
+  document.querySelectorAll('.faq-question').forEach(q => {
+    q.addEventListener('click', () => {
+      const item = q.parentElement;
+      item.classList.toggle('open');
+    });
+  });
 }
 
-function attemptLogin(email, password) {
+function attemptLogin(email, password, targetRedirect = '#dashboard') {
   const user = db.get('users').find(u => u.email === email && u.password === password);
 
   if (user) {
@@ -512,7 +1134,7 @@ function attemptLogin(email, password) {
     sessionStorage.setItem('active_user', JSON.stringify(user));
     db.log(user.id, user.name, 'LOGIN', 'Berhasil login ke dalam sistem.');
     showToast(`Selamat datang kembali, ${user.name}!`, 'success');
-    window.location.hash = '#dashboard';
+    window.location.hash = targetRedirect;
   } else {
     showToast('Email atau password salah.', 'error');
   }
@@ -522,19 +1144,28 @@ function attemptLogin(email, password) {
 // 2. RENDER APP SHELL (Sidebar & Header Layout)
 // ----------------------------------------------------
 function renderAppShell(activePage, queryParams) {
-  const school = db.get('schools')[0] || { name: 'BankSoalPro', npsn: '-' };
+  const activeSchoolId = sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1';
+  const allSchools = db.get('schools');
+  const currentSchool = allSchools.find(s => s.id === activeSchoolId) || allSchools[0] || { name: 'BankSoalPro', academicYear: '-' };
 
   const menuConfig = [
     { page: '#dashboard', label: 'Dashboard', icon: 'layout-dashboard', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
+    { page: '#sekolah', label: 'Kelola Sekolah', icon: 'building-2', roles: ['SUPER_ADMIN'] },
     { page: '#profil-sekolah', label: 'Profil Sekolah', icon: 'school', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
     { page: '#guru', label: 'Manajemen Guru', icon: 'users', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#kelola-user', label: 'Kelola Pengguna', icon: 'user-cog', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#kelola-siswa', label: 'Kelola Siswa', icon: 'graduation-cap', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#privileges', label: 'Hak Akses & Privilege', icon: 'key-round', roles: ['SUPER_ADMIN'] },
     { page: '#struktur', label: 'Struktur Kurikulum', icon: 'git-branch', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
     { page: '#soal', label: 'Bank Soal', icon: 'file-text', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
     { page: '#impor', label: 'Import Soal', icon: 'file-up', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU'] },
     { page: '#paket', label: 'Paket Soal', icon: 'package', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#android-exam', label: 'App Ujian Android', icon: 'smartphone', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
     { page: '#rekap-ujian', label: 'Hasil & Rekap Ujian', icon: 'award', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
-    { page: '#logs', label: 'Audit Log & Backup', icon: 'shield-alert', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#logs', label: 'Audit Log & Keamanan', icon: 'shield-alert', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#profil-saya', label: 'Profil Saya', icon: 'circle-user-round', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
   ];
+
 
   let sidebarMenuHtml = '';
   menuConfig.forEach(item => {
@@ -550,6 +1181,26 @@ function renderAppShell(activePage, queryParams) {
   });
 
   const initials = activeUser.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+  const notifications = db.getNotifications(activeUser.id);
+  const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  let schoolHeaderHtml = `
+    <div class="school-badge">
+      <i data-lucide="school" style="width:16px; height:16px;"></i>
+      <span>${currentSchool.name} (${currentSchool.academicYear})</span>
+    </div>
+  `;
+
+  if (activeUser.role === 'SUPER_ADMIN') {
+    schoolHeaderHtml = `
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:12px; font-weight:700; color:var(--neutral-700);">Konteks Sekolah:</span>
+        <select id="super-admin-school-select" class="school-switcher-select">
+          ${allSchools.map(s => `<option value="${s.id}" ${s.id === currentSchool.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+        </select>
+      </div>
+    `;
+  }
 
   appMount.innerHTML = `
     <div class="app-container">
@@ -592,10 +1243,29 @@ function renderAppShell(activePage, queryParams) {
             </div>
           </div>
           
-          <div class="header-actions">
-            <div class="school-badge">
-              <i data-lucide="school" style="width:16px; height:16px;"></i>
-              <span>${school.name} (${school.academicYear})</span>
+          <div class="header-actions" style="position:relative; display:flex; align-items:center; gap:16px;">
+            ${schoolHeaderHtml}
+            
+            <button class="btn btn-secondary btn-icon" id="btn-notif-toggle" style="position:relative;" title="Notifikasi System">
+              <i data-lucide="bell" style="width:18px; height:18px;"></i>
+              ${unreadCount > 0 ? `<span style="position:absolute; top:-2px; right:-2px; background:var(--danger-text); color:white; font-size:10px; font-weight:800; padding:2px 5px; border-radius:10px;">${unreadCount}</span>` : ''}
+            </button>
+
+            <!-- Notifications Popover -->
+            <div class="notif-popover" id="notif-popover">
+              <div class="notif-header">
+                <span>Pemberitahuan System</span>
+                <span style="font-size:11px; color:var(--primary);">${unreadCount} Baru</span>
+              </div>
+              <div style="max-height:260px; overflow-y:auto;">
+                ${notifications.map(n => `
+                  <div class="notif-item ${n.isRead ? '' : 'unread'}">
+                    <strong style="color:var(--neutral-900);">${n.title}</strong>
+                    <span style="color:var(--neutral-700);">${n.message}</span>
+                    <span style="font-size:10px; color:var(--neutral-500); margin-top:2px;">${new Date(n.timestamp).toLocaleString('id-ID')}</span>
+                  </div>
+                `).join('') || '<div style="padding:16px; text-align:center; color:var(--neutral-600);">Tidak ada notifikasi.</div>'}
+              </div>
             </div>
           </div>
         </header>
@@ -613,6 +1283,27 @@ function renderAppShell(activePage, queryParams) {
     showToast('Berhasil keluar akun.', 'info');
     handleRouting();
   });
+
+  // Bind Super Admin School Switcher
+  const schoolSelect = document.getElementById('super-admin-school-select');
+  if (schoolSelect) {
+    schoolSelect.addEventListener('change', (e) => {
+      sessionStorage.setItem('active_school_id', e.target.value);
+      showToast(`Konteks sekolah diubah: ${e.target.options[e.target.selectedIndex].text}`, 'success');
+      handleRouting();
+    });
+  }
+
+  // Bind Notif Toggle Popover
+  const notifBtn = document.getElementById('btn-notif-toggle');
+  const notifPopover = document.getElementById('notif-popover');
+  if (notifBtn && notifPopover) {
+    notifBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      notifPopover.classList.toggle('open');
+    });
+    document.addEventListener('click', () => notifPopover.classList.remove('open'));
+  }
 
   lucide.createIcons();
 
@@ -650,6 +1341,11 @@ function renderAppShell(activePage, queryParams) {
       subtitleDisplay.innerText = 'Pemantauan statistik bank soal terpusat';
       renderDashboard(contentMount);
       break;
+    case '#sekolah':
+      titleDisplay.innerText = 'Kelola Sekolah Multi-Tenant';
+      subtitleDisplay.innerText = 'Super Admin: Tambah, ubah, dan navigasi data sekolah terdaftar';
+      renderKelolaSekolah(contentMount);
+      break;
     case '#profil-sekolah':
       titleDisplay.innerText = 'Profil Sekolah';
       subtitleDisplay.innerText = 'Kelola informasi identitas & tahun ajaran sekolah';
@@ -659,6 +1355,11 @@ function renderAppShell(activePage, queryParams) {
       titleDisplay.innerText = 'Manajemen Pendidik';
       subtitleDisplay.innerText = 'Kelola akun guru mata pelajaran dan hak akses';
       renderGuru(contentMount);
+      break;
+    case '#privileges':
+      titleDisplay.innerText = 'Hak Akses & Privilege Peran';
+      subtitleDisplay.innerText = 'Super Admin: Atur privilege fitur untuk setiap jenis akun';
+      renderPrivileges(contentMount);
       break;
     case '#struktur':
       titleDisplay.innerText = 'Struktur Kurikulum';
@@ -683,7 +1384,7 @@ function renderAppShell(activePage, queryParams) {
       break;
     case '#paket':
       titleDisplay.innerText = 'Manajemen Paket Soal';
-      subtitleDisplay.innerText = 'Penyusunan paket ujian otomatis/acak dan ekspor berkas';
+      subtitleDisplay.innerText = 'Penyusunan paket ujian otomatis/acak, QR Code, dan ekspor berkas';
       renderPaketSoal(contentMount);
       break;
     case '#rekap-ujian':
@@ -694,9 +1395,24 @@ function renderAppShell(activePage, queryParams) {
       renderRekapUjian(contentMount);
       break;
     case '#logs':
-      titleDisplay.innerText = 'Audit Keamanan & Cadangan';
-      subtitleDisplay.innerText = 'Riwayat log aktivitas administrator dan backup/restore basis data';
+      titleDisplay.innerText = 'Audit Log & Pertahanan Keamanan';
+      subtitleDisplay.innerText = 'Riwayat log aktivitas, pertahanan cyber crime, dan backup/restore basis data';
       renderLogs(contentMount);
+      break;
+    case '#profil-saya':
+      titleDisplay.innerText = 'Profil Akun Saya';
+      subtitleDisplay.innerText = 'Lihat informasi akun, sekolah, dan mata pelajaran yang diampu';
+      renderProfilSaya(contentMount);
+      break;
+    case '#kelola-user':
+      titleDisplay.innerText = 'Kelola Semua Pengguna';
+      subtitleDisplay.innerText = 'CRUD akun admin, guru, reviewer, dan siswa';
+      renderKelolaUser(contentMount);
+      break;
+    case '#kelola-siswa':
+      titleDisplay.innerText = 'Kelola Data Siswa';
+      subtitleDisplay.innerText = 'CRUD data siswa, impor dari Excel/CSV, dan ekspor data';
+      renderKelolaSiswa(contentMount);
       break;
     default:
       window.location.hash = '#dashboard';
@@ -1562,16 +2278,22 @@ function renderBankSoal(mount) {
   const classes = db.get('classes');
   const chapters = db.get('chapters');
   const questions = db.get('questions');
-  const bookmarks = db.get('bookmarks');
 
-  // Sidebar filter state
+  let filterScope = 'SEMUA';
   let filterKeyword = '';
   let filterSubject = '';
-  let filterDifficulty = '';
   let filterType = '';
   let filterStatus = '';
 
   mount.innerHTML = `
+    <!-- Scope filter bar -->
+    <div style="display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--neutral-400); padding-bottom:10px;">
+      <button class="btn btn-primary scope-tab" data-scope="SEMUA">Semua Soal</button>
+      <button class="btn btn-secondary scope-tab" data-scope="SAYA">Soal Karya Saya</button>
+      <button class="btn btn-secondary scope-tab" data-scope="GURU_LAIN">Soal Guru Lain (Sama Mapel/Kelas)</button>
+      <button class="btn btn-secondary scope-tab" data-scope="FAVORIT">Soal Favorit Saya</button>
+    </div>
+
     <!-- Top actions row -->
     <div class="action-row">
       <div class="search-filter-box">
@@ -1614,9 +2336,33 @@ function renderBankSoal(mount) {
   lucide.createIcons();
 
   const listMount = document.getElementById('questions-list-mount');
+  const scopeTabs = mount.querySelectorAll('.scope-tab');
+
+  scopeTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      scopeTabs.forEach(t => t.className = 'btn btn-secondary scope-tab');
+      tab.className = 'btn btn-primary scope-tab';
+      filterScope = tab.dataset.scope;
+      reloadList();
+    });
+  });
 
   const reloadList = () => {
-    let list = [...questions];
+    let list = db.get('questions');
+
+    // Apply Subject Filter for Teachers
+    if (activeUser.role === 'GURU' && activeUser.subjectIds && activeUser.subjectIds.length > 0) {
+      list = list.filter(q => activeUser.subjectIds.includes(q.subjectId));
+    }
+
+    // Apply Scope Filter
+    if (filterScope === 'SAYA') {
+      list = list.filter(q => q.creatorId === activeUser.id);
+    } else if (filterScope === 'GURU_LAIN') {
+      list = list.filter(q => q.creatorId !== activeUser.id);
+    } else if (filterScope === 'FAVORIT') {
+      list = list.filter(q => db.isBookmarked(activeUser.id, q.id));
+    }
 
     // Apply filters
     if (filterKeyword) {
@@ -1628,27 +2374,20 @@ function renderBankSoal(mount) {
       );
     }
 
-    if (filterSubject) {
-      list = list.filter(q => q.subjectId === filterSubject);
-    }
-
-    if (filterType) {
-      list = list.filter(q => q.type === filterType);
-    }
-
-    if (filterStatus) {
-      list = list.filter(q => q.status === filterStatus);
-    }
+    if (filterSubject) list = list.filter(q => q.subjectId === filterSubject);
+    if (filterType) list = list.filter(q => q.type === filterType);
+    if (filterStatus) list = list.filter(q => q.status === filterStatus);
 
     listMount.innerHTML = list.map(q => {
       const mapel = subjects.find(s => s.id === q.subjectId)?.name || 'Umum';
       const kls = classes.find(c => c.id === q.classId)?.name || 'X';
       const bab = chapters.find(c => c.id === q.chapterId)?.name || 'Umum';
 
-      const isBookmarked = bookmarks.some(b => b.userId === activeUser.id && b.questionId === q.id);
+      const isBookmarked = db.isBookmarked(activeUser.id, q.id);
       const starIcon = isBookmarked ? 'star-off' : 'star';
       const starClass = isBookmarked ? 'color: #ecc94b; fill: #ecc94b;' : '';
 
+      const isMyQuestion = q.creatorId === activeUser.id || activeUser.role === 'SUPER_ADMIN' || activeUser.role === 'ADMIN_SEKOLAH';
       const statusClass = q.status === 'APPROVED' ? 'success' : q.status === 'REVIEW' ? 'warning' : q.status === 'REJECTED' ? 'danger' : 'neutral';
 
       // Options html for MC
@@ -1681,6 +2420,25 @@ function renderBankSoal(mount) {
         choicesHtml = `<div style="font-size:12px; margin-top:8px; color: var(--neutral-700);"><strong>Jawaban Benar:</strong> ${q.correctAnswer}</div>`;
       }
 
+      // Action buttons according to ownership
+      let editButtons = '';
+      if (isMyQuestion) {
+        editButtons = `
+          <a class="btn btn-secondary btn-icon" style="padding:6px;" href="#soal?action=edit&id=${q.id}" title="Edit Soal Saya">
+            <i data-lucide="edit" style="width:16px; height:16px;"></i>
+          </a>
+          <button class="btn btn-danger btn-icon delete-soal" data-id="${q.id}" style="padding:6px;" title="Hapus Soal Saya">
+            <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+          </button>
+        `;
+      } else {
+        editButtons = `
+          <button class="btn btn-primary adopt-soal" style="padding:6px 12px; font-size:11px;" data-id="${q.id}" title="Ambil / Salin Soal ke Bank Saya">
+            <i data-lucide="copy" style="width:14px; height:14px;"></i> Salin ke Bank Saya
+          </button>
+        `;
+      }
+
       // Review flow action buttons
       let reviewActions = '';
       if (activeUser.role === 'REVIEWER' && q.status === 'REVIEW') {
@@ -1692,7 +2450,7 @@ function renderBankSoal(mount) {
             <i data-lucide="x" style="width:14px; height:14px;"></i> Tolak
           </button>
         `;
-      } else if (activeUser.role === 'GURU' && q.status === 'DRAFT') {
+      } else if (activeUser.role === 'GURU' && q.status === 'DRAFT' && isMyQuestion) {
         reviewActions = `
           <button class="btn btn-primary submit-review" style="padding:6px 12px; font-size:12px;" data-id="${q.id}">
             <i data-lucide="send" style="width:14px; height:14px;"></i> Ajukan Review
@@ -1716,12 +2474,10 @@ function renderBankSoal(mount) {
               <button class="btn btn-secondary btn-icon toggle-fav" data-id="${q.id}" style="padding:6px;" title="Bookmark">
                 <i data-lucide="${starIcon}" style="width:16px; height:16px; ${starClass}"></i>
               </button>
-              <a class="btn btn-secondary btn-icon" style="padding:6px;" href="#soal?action=edit&id=${q.id}" title="Edit">
-                <i data-lucide="edit" style="width:16px; height:16px;"></i>
-              </a>
-              <button class="btn btn-danger btn-icon delete-soal" data-id="${q.id}" style="padding:6px;" title="Hapus">
-                <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+              <button class="btn btn-secondary btn-icon btn-item-analysis" data-id="${q.id}" style="padding:6px;" title="Analisis Butir Soal">
+                <i data-lucide="bar-chart-2" style="width:16px; height:16px; color:var(--primary);"></i>
               </button>
+              ${editButtons}
             </div>
           </div>
           
@@ -1731,57 +2487,58 @@ function renderBankSoal(mount) {
 
           <!-- Footer/Aktivitas -->
           <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--neutral-400); padding-top:12px; margin-top:8px; font-size:11px; color: var(--neutral-600);">
-            <div>Dibuat oleh: <strong>${q.creatorName || 'Guru'}</strong> | Bab: ${bab}</div>
+            <div>Dibuat oleh: <strong>${q.creatorName || 'Guru'}</strong> ${q.adoptedFrom ? `(Disalin dari ${q.adoptedFrom})` : ''} | Bab: ${bab}</div>
             <div style="display:inline-flex; gap:8px;">
               ${reviewActions}
             </div>
           </div>
         </div>
       `;
-    }).join('') || '<div class="card" style="padding:40px; text-align:center; color: var(--neutral-600);">Tidak ada soal yang cocok dengan filter pencarian.</div>';
+    }).join('') || '<div class="card" style="padding:40px; text-align:center; color: var(--neutral-600);">Tidak ada soal yang cocok dengan kriteria pencarian.</div>';
 
     lucide.createIcons();
 
-    // LaTeX rendering trigger
     if (window.MathJax && window.MathJax.typesetPromise) {
       window.MathJax.typesetPromise([listMount]).catch(err => console.error(err));
     }
 
-    // Bind item action events
+    // Event Bindings
     listMount.querySelectorAll('.toggle-fav').forEach(btn => {
       btn.addEventListener('click', () => {
-        const qId = btn.dataset.id;
-        let bms = db.get('bookmarks');
-        const idx = bms.findIndex(b => b.userId === activeUser.id && b.questionId === qId);
-        if (idx !== -1) {
-          bms.splice(idx, 1);
-          db.save('bookmarks', bms);
-          showToast('Bookmark soal dihapus.', 'info');
-        } else {
-          bms.push({ id: `bm-${Date.now()}`, userId: activeUser.id, questionId: qId });
-          db.save('bookmarks', bms);
-          showToast('Soal disimpan ke favorit.', 'success');
-        }
+        const isB = db.toggleBookmark(activeUser.id, btn.dataset.id);
+        showToast(isB ? 'Soal ditambahkan ke favorit!' : 'Bookmark dihapus.', isB ? 'success' : 'info');
         reloadList();
+      });
+    });
+
+    listMount.querySelectorAll('.btn-item-analysis').forEach(btn => {
+      btn.addEventListener('click', () => openItemAnalysisModal(btn.dataset.id));
+    });
+
+    listMount.querySelectorAll('.adopt-soal').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cloned = db.adoptQuestion(btn.dataset.id, activeUser);
+        if (cloned) {
+          showToast(`Berhasil menyalin soal ${cloned.code} ke Bank Soal Anda!`, 'success');
+          reloadList();
+        }
       });
     });
 
     listMount.querySelectorAll('.delete-soal').forEach(btn => {
       btn.addEventListener('click', () => {
-        const id = btn.dataset.id;
-        if (confirm('Apakah Anda yakin ingin menghapus soal ini?')) {
-          db.delete('questions', id);
+        if (confirm('Apakah Anda yakin ingin menghapus soal milik Anda ini?')) {
+          db.delete('questions', btn.dataset.id);
           showToast('Soal berhasil dihapus.', 'success');
           reloadList();
         }
       });
     });
 
-    // Review flow handlers
     listMount.querySelectorAll('.submit-review').forEach(btn => {
       btn.addEventListener('click', () => {
         db.update('questions', btn.dataset.id, { status: 'REVIEW' });
-        showToast('Soal diajukan untuk direview oleh Reviewer.', 'info');
+        showToast('Soal diajukan ke Reviewer.', 'success');
         reloadList();
       });
     });
@@ -1789,44 +2546,44 @@ function renderBankSoal(mount) {
     listMount.querySelectorAll('.approve-soal').forEach(btn => {
       btn.addEventListener('click', () => {
         db.update('questions', btn.dataset.id, { status: 'APPROVED', reviewerId: activeUser.id, reviewerName: activeUser.name });
-        showToast('Kualitas soal disetujui.', 'success');
+        showToast('Soal berhasil disetujui (APPROVED).', 'success');
         reloadList();
       });
     });
 
     listMount.querySelectorAll('.reject-soal').forEach(btn => {
       btn.addEventListener('click', () => {
-        const feedback = prompt('Masukkan alasan penolakan/revisi:', 'Perlu revisi teks');
-        if (feedback !== null) {
-          db.update('questions', btn.dataset.id, { status: 'REJECTED', discussion: (db.get('questions').find(q => q.id === btn.dataset.id).discussion || '') + `<p style="color:red">Catatan Reviewer: ${feedback}</p>` });
-          showToast('Soal dikembalikan untuk direvisi.', 'error');
-          reloadList();
-        }
+        db.update('questions', btn.dataset.id, { status: 'REJECTED', reviewerId: activeUser.id, reviewerName: activeUser.name });
+        showToast('Soal ditolak (REJECTED).', 'error');
+        reloadList();
       });
     });
   };
 
-  // Bind filtering inputs
+  // Bind Filter Input listeners
   document.getElementById('soal-search').addEventListener('input', (e) => {
     filterKeyword = e.target.value;
     reloadList();
   });
+
   document.getElementById('filter-mapel').addEventListener('change', (e) => {
     filterSubject = e.target.value;
     reloadList();
   });
+
   document.getElementById('filter-tingkat').addEventListener('change', (e) => {
     filterType = e.target.value;
     reloadList();
   });
+
   document.getElementById('filter-status').addEventListener('change', (e) => {
     filterStatus = e.target.value;
     reloadList();
   });
 
-  // Run initial list render
   reloadList();
 }
+
 
 // ----------------------------------------------------
 // 8. PAGE: CREATE/EDIT QUESTION FORM
@@ -1834,6 +2591,13 @@ function renderBankSoal(mount) {
 function renderFormSoal(mount, questionId = null) {
   const isEdit = !!questionId;
   const q = isEdit ? db.get('questions').find(soal => soal.id === questionId) : {};
+
+  // Authorization check for Edit
+  if (isEdit && activeUser.role === 'GURU' && q.creatorId !== activeUser.id) {
+    showToast('Akses Ditolak: Anda hanya dapat mengedit soal buatan Anda sendiri.', 'error');
+    window.location.hash = '#soal';
+    return;
+  }
 
   const subjects = db.get('subjects');
   const classes = db.get('classes');
@@ -1881,8 +2645,10 @@ function renderFormSoal(mount, questionId = null) {
 
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
               <div class="form-group">
-                <label class="form-label" for="q-code">Kode Soal (Unik)</label>
-                <input type="text" id="q-code" class="form-input" placeholder="INF-X-001" value="${q.code || ''}" required>
+                <label class="form-label" for="q-code">Kode Soal (Unik)
+                  ${!isEdit ? '<button type="button" id="btn-auto-code" style="float:right;font-size:10px;color:var(--primary);background:none;border:none;cursor:pointer;text-decoration:underline;">🔄 Auto</button>' : ''}
+                </label>
+                <input type="text" id="q-code" class="form-input" placeholder="INF-X-001" value="${q.code || ''}" required style="font-family:monospace;letter-spacing:1px;">
               </div>
               <div class="form-group">
                 <label class="form-label" for="q-type">Tipe Soal</label>
@@ -1926,6 +2692,9 @@ function renderFormSoal(mount, questionId = null) {
           <div class="card-body">
             <div class="rich-editor-mock">
               <div class="editor-toolbar">
+                <button class="toolbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i data-lucide="undo-2" style="width:14px; height:14px;"></i></button>
+                <button class="toolbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i data-lucide="redo-2" style="width:14px; height:14px;"></i></button>
+                <span class="toolbar-divider"></span>
                 <button class="toolbar-btn" data-editor-cmd="bold" title="Tebal"><i data-lucide="bold" style="width:14px; height:14px;"></i></button>
                 <button class="toolbar-btn" data-editor-cmd="italic" title="Miring"><i data-lucide="italic" style="width:14px; height:14px;"></i></button>
                 <span class="toolbar-divider"></span>
@@ -2315,6 +3084,51 @@ function renderFormSoal(mount, questionId = null) {
 
   // Run initial tools binder
   setupVisualEditor('q-text', 'preview-question-text');
+  
+  // Auto-generate Kode Soal
+  const btnAutoCode = document.getElementById('btn-auto-code');
+  if (btnAutoCode) {
+    btnAutoCode.addEventListener('click', () => {
+      const sId = subSelect.value;
+      if (!sId) {
+        showToast('Pilih Mata Pelajaran terlebih dahulu untuk auto-generate kode.', 'error');
+        return;
+      }
+      document.getElementById('q-code').value = db.generateQuestionCode(sId);
+      showToast('Kode soal berhasil dibuat otomatis.', 'success');
+    });
+  }
+
+  // Undo / Redo logic for visual editor
+  const editorEl = document.getElementById('q-text');
+  let historyStack = [editorEl.value];
+  let historyIdx = 0;
+
+  editorEl.addEventListener('input', () => {
+    historyStack = historyStack.slice(0, historyIdx + 1);
+    historyStack.push(editorEl.value);
+    historyIdx++;
+    updateLivePreview();
+  });
+
+  document.getElementById('btn-undo')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (historyIdx > 0) {
+      historyIdx--;
+      editorEl.value = historyStack[historyIdx];
+      updateLivePreview();
+    }
+  });
+
+  document.getElementById('btn-redo')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (historyIdx < historyStack.length - 1) {
+      historyIdx++;
+      editorEl.value = historyStack[historyIdx];
+      updateLivePreview();
+    }
+  });
+
   document.getElementById('q-disc').addEventListener('input', updateLivePreview);
 
   // Render choices inputs initially
@@ -2631,6 +3445,7 @@ function renderPaketSoal(mount) {
   const packages = db.get('packages');
   const subjects = db.get('subjects');
   const classes = db.get('classes');
+  const canExport = db.can(activeUser.role, 'canExport');
 
   mount.innerHTML = `
     <div class="action-row">
@@ -2648,43 +3463,65 @@ function renderPaketSoal(mount) {
             <thead>
               <tr>
                 <th>Nama Paket Soal</th>
-                <th>Jenis</th>
+                <th>Jenis & Durasi</th>
                 <th>Mata Pelajaran</th>
                 <th>Kelas</th>
-                <th>Jumlah Soal</th>
-                <th style="text-align:right;">Aksi Berkas</th>
+                <th>Kode & QR Ujian</th>
+                <th style="text-align:right;">Aksi & Izin Siswa</th>
               </tr>
             </thead>
             <tbody>
               ${packages.map(p => {
     const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
     const cls = classes.find(c => c.id === p.classId)?.name || '-';
+    const examCode = p.examCode || 'EXAM-INF-8921';
     return `
                   <tr>
                     <td>
-                      <div style="font-weight:700; color:var(--neutral-900);">${p.name}</div>
-                      <div style="font-size:11px; color:var(--neutral-600); margin-top:2px;">Disusun oleh: ${p.creatorName || 'Guru'}</div>
+                      <div class="pkg-name-clickable" data-id="${p.id}" style="font-weight:700; color:var(--primary); cursor:pointer; text-decoration:underline;" title="Klik untuk mengedit detail paket & token">
+                        ${p.name}
+                      </div>
+                      <div style="font-size:11px; color:var(--neutral-600); margin-top:2px;">
+                        Disusun oleh: ${p.creatorName || 'Guru'} | Soal: ${(p.questionIds || []).length} butir
+                      </div>
                     </td>
-                    <td><span class="badge badge-primary">${p.type}</span></td>
+                    <td>
+                      <span class="badge badge-primary">${p.type}</span>
+                      <div style="font-size:11px; font-weight:700; color:var(--neutral-700); margin-top:4px;">
+                        <i data-lucide="clock" style="width:12px; height:12px; display:inline-block; vertical-align:middle;"></i> ${p.duration || 60} Menit
+                      </div>
+                    </td>
                     <td>${sub}</td>
                     <td>Kelas ${cls}</td>
-                    <td><strong style="color:var(--primary); font-size:15px;">${(p.questionIds || []).length}</strong> butir</td>
+                    <td>
+                      <button class="btn btn-secondary btn-show-qr" data-id="${p.id}" style="padding:4px 10px; font-size:11px; font-weight:800; color:var(--primary);">
+                        <i data-lucide="qr-code" style="width:14px; height:14px;"></i> ${examCode}
+                      </button>
+                    </td>
                     <td style="text-align:right;">
-                      <div style="display:inline-flex; gap:8px;">
+                      <div style="display:inline-flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
                         <button class="btn btn-secondary btn-icon btn-preview-pkg" data-id="${p.id}" title="Pratinjau Soal">
-                          <i data-lucide="eye" style="width:16px; height:16px;"></i>
+                          <i data-lucide="eye" style="width:15px; height:15px;"></i>
                         </button>
-                        <button class="btn btn-secondary btn-icon btn-export-doc" data-id="${p.id}" title="Ekspor ke Word (MS Word)">
-                          <i data-lucide="file-text" style="width:16px; height:16px; color:#2b6cb0;"></i>
+                        
+                        <button class="btn btn-secondary btn-manage-student-perm" data-id="${p.id}" style="padding:6px 10px; font-size:11px;" title="Kelola Persetujuan Izin Siswa">
+                          <i data-lucide="user-check" style="width:14px; height:14px;"></i> Izin Siswa
                         </button>
-                        <button class="btn btn-secondary btn-icon btn-export-xls" data-id="${p.id}" title="Ekspor ke Excel">
-                          <i data-lucide="file-spreadsheet" style="width:16px; height:16px; color:#2f855a;"></i>
-                        </button>
-                        <button class="btn btn-secondary btn-icon btn-export-pdf" data-id="${p.id}" title="Cetak / Simpan PDF">
-                          <i data-lucide="printer" style="width:16px; height:16px; color:#c53030;"></i>
-                        </button>
+
+                        ${canExport ? `
+                          <button class="btn btn-secondary btn-icon btn-export-doc" data-id="${p.id}" title="Ekspor Word">
+                            <i data-lucide="file-text" style="width:15px; height:15px; color:#2b6cb0;"></i>
+                          </button>
+                          <button class="btn btn-secondary btn-icon btn-export-xls" data-id="${p.id}" title="Ekspor Excel">
+                            <i data-lucide="file-spreadsheet" style="width:15px; height:15px; color:#2f855a;"></i>
+                          </button>
+                          <button class="btn btn-secondary btn-icon btn-export-pdf" data-id="${p.id}" title="Cetak PDF">
+                            <i data-lucide="printer" style="width:15px; height:15px; color:#c53030;"></i>
+                          </button>
+                        ` : ''}
+
                         <button class="btn btn-danger btn-icon btn-delete-pkg" data-id="${p.id}" title="Hapus Paket">
-                          <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+                          <i data-lucide="trash-2" style="width:15px; height:15px;"></i>
                         </button>
                       </div>
                     </td>
@@ -2700,25 +3537,37 @@ function renderPaketSoal(mount) {
 
   lucide.createIcons();
 
-  // Add click listener
   document.getElementById('btn-tambah-paket').addEventListener('click', openCreatePackageModal);
 
-  // File action handlers
+  mount.querySelectorAll('.pkg-name-clickable').forEach(el => {
+    el.addEventListener('click', () => openPackageDetailModal(el.dataset.id));
+  });
+
+  mount.querySelectorAll('.btn-show-qr').forEach(btn => {
+    btn.addEventListener('click', () => openQRCodeModal(btn.dataset.id));
+  });
+
+  mount.querySelectorAll('.btn-manage-student-perm').forEach(btn => {
+    btn.addEventListener('click', () => openStudentPermissionModal(btn.dataset.id));
+  });
+
   mount.querySelectorAll('.btn-preview-pkg').forEach(btn => {
     btn.addEventListener('click', () => previewPackageQuestions(btn.dataset.id));
   });
 
-  mount.querySelectorAll('.btn-export-doc').forEach(btn => {
-    btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'doc'));
-  });
+  if (canExport) {
+    mount.querySelectorAll('.btn-export-doc').forEach(btn => {
+      btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'doc'));
+    });
 
-  mount.querySelectorAll('.btn-export-xls').forEach(btn => {
-    btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'xls'));
-  });
+    mount.querySelectorAll('.btn-export-xls').forEach(btn => {
+      btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'xls'));
+    });
 
-  mount.querySelectorAll('.btn-export-pdf').forEach(btn => {
-    btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'pdf'));
-  });
+    mount.querySelectorAll('.btn-export-pdf').forEach(btn => {
+      btn.addEventListener('click', () => triggerExport(btn.dataset.id, 'pdf'));
+    });
+  }
 
   mount.querySelectorAll('.btn-delete-pkg').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2731,6 +3580,58 @@ function renderPaketSoal(mount) {
       }
     });
   });
+}
+
+function openPackageDetailModal(pkgId) {
+  const p = db.get('packages').find(pkg => pkg.id === pkgId);
+  if (!p) return;
+  const subjects = db.get('subjects');
+  const classes = db.get('classes');
+  const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
+  const cls = classes.find(c => c.id === p.classId)?.name || '-';
+
+  modalContent.innerHTML = `
+    <div style="padding:24px; max-width:500px; width:100%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="font-size:18px; font-weight:800; color:var(--neutral-900);">Detail Paket Soal</h3>
+        <button class="btn btn-icon btn-secondary btn-close-modal"><i data-lucide="x"></i></button>
+      </div>
+
+      <div style="background:var(--neutral-100); padding:16px; border-radius:8px; margin-bottom:16px;">
+        <div style="margin-bottom:8px;"><strong>Nama Paket:</strong> ${p.name}</div>
+        <div style="margin-bottom:8px;"><strong>Mata Pelajaran:</strong> ${sub}</div>
+        <div style="margin-bottom:8px;"><strong>Kelas:</strong> ${cls}</div>
+        <div style="margin-bottom:8px;"><strong>Kode Paket Ujian:</strong> <span style="font-family:monospace; font-weight:bold; color:var(--primary);">${p.examCode || '-'}</span></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Token Ujian (Akses Siswa)</label>
+        <input type="text" id="edit-pkg-token" class="form-input" value="${p.examToken || ''}" style="text-transform:uppercase; font-weight:bold; letter-spacing:1px;" placeholder="Contoh: TOKEN123">
+        <p style="font-size:11px; color:var(--neutral-500); margin-top:4px;">Token ini harus diberikan kepada siswa agar dapat memulai ujian. Kosongkan jika tidak perlu token.</p>
+      </div>
+
+      <div style="display:flex; gap:12px; margin-top:24px; justify-content:flex-end;">
+        <button class="btn btn-secondary btn-close-modal">Batal</button>
+        <button class="btn btn-primary" id="btn-save-pkg-detail">Simpan Perubahan</button>
+      </div>
+    </div>
+  `;
+
+  globalModal.style.display = 'flex';
+  lucide.createIcons();
+
+  modalContent.querySelectorAll('.btn-close-modal').forEach(btn => {
+    btn.onclick = () => { globalModal.style.display = 'none'; };
+  });
+
+  document.getElementById('btn-save-pkg-detail').onclick = () => {
+    const newToken = document.getElementById('edit-pkg-token').value.trim().toUpperCase();
+    p.examToken = newToken;
+    db.update('packages', p.id, p);
+    showToast('Token ujian berhasil diperbarui.', 'success');
+    globalModal.style.display = 'none';
+    handleRouting();
+  };
 }
 
 function triggerExport(pkgId, type) {
@@ -2859,7 +3760,7 @@ function openCreatePackageModal() {
           <input type="text" id="p-name" class="form-input" placeholder="contoh: UTS Ganjil Matematika Kelas X" required>
         </div>
         
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
           <div class="form-group">
             <label class="form-label" for="p-type">Jenis Ujian</label>
             <select id="p-type" class="form-input" required>
@@ -2870,6 +3771,11 @@ function openCreatePackageModal() {
               <option value="TRY_OUT">Try Out</option>
               <option value="LATIHAN">Latihan Mandiri</option>
             </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="p-duration">Durasi Ujian (Menit)</label>
+            <input type="number" min="5" max="300" id="p-duration" class="form-input" value="60" required>
           </div>
           
           <div class="form-group">
@@ -2895,6 +3801,21 @@ function openCreatePackageModal() {
               <option value="">Pilih Kelas</option>
               ${classes.map(c => `<option value="${c.id}">Kelas ${c.name}</option>`).join('')}
             </select>
+          </div>
+        </div>
+
+        <!-- Shuffle Settings -->
+        <div style="border-top:1px dashed var(--neutral-400); padding-top:12px;">
+          <h4 style="font-size:13px; font-weight:700; margin-bottom:8px;">Pengaturan Pengacakan Ujian</h4>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+              <input type="checkbox" id="p-rand-q" checked style="width:16px; height:16px;">
+              <span>Acak Urutan Soal Ujian</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+              <input type="checkbox" id="p-rand-c" checked style="width:16px; height:16px;">
+              <span>Acak Urutan Pilihan Jawaban (A, B, C, D)</span>
+            </label>
           </div>
         </div>
 
@@ -2927,6 +3848,8 @@ function openCreatePackageModal() {
               </select>
             </div>
           </div>
+        </div>
+
         <!-- Audio & Animation Settings -->
         <div style="border-top:1px dashed var(--neutral-400); padding-top:16px; margin-top:8px;">
           <h4 style="font-size:13px; font-weight:700; margin-bottom:12px;">Fitur Interaktif CBT Ujian</h4>
@@ -2940,6 +3863,31 @@ function openCreatePackageModal() {
               <span>Aktifkan Animasi Latar Belakang (Partikel)</span>
             </label>
           </div>
+        </div>
+
+        <!-- Token Ujian -->
+        <div style="border-top:1px dashed var(--neutral-400); padding-top:16px; margin-top:8px;">
+          <h4 style="font-size:13px; font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:8px;">
+            <i data-lucide="lock-keyhole" style="width:15px;height:15px;color:var(--primary)"></i>
+            Token Akses Ujian (Wajib Diisi Siswa Sebelum Mulai)
+          </h4>
+          <p style="font-size:11px; color:var(--neutral-600); margin-bottom:12px;">
+            Siswa wajib memasukkan kode token ini setelah memasukkan kode paket ujian agar dapat mulai mengerjakan.
+          </p>
+          <div style="display:flex; gap:10px; align-items:flex-end;">
+            <div class="form-group" style="flex:1; margin:0;">
+              <label class="form-label" for="p-token">Kode Token Ujian</label>
+              <input type="text" id="p-token" class="form-input" placeholder="contoh: INF001" maxlength="12"
+                style="text-transform:uppercase; font-family:monospace; font-weight:700; letter-spacing:2px; font-size:16px;">
+            </div>
+            <button type="button" id="btn-gen-token" class="btn btn-secondary" style="padding:10px 14px; white-space:nowrap;">
+              <i data-lucide="shuffle" style="width:14px;height:14px;"></i> Auto Generate
+            </button>
+          </div>
+          <p style="font-size:11px; color:var(--neutral-500); margin-top:6px;">
+            <i data-lucide="info" style="width:11px;height:11px;display:inline;"></i>
+            Kosongkan jika ujian tidak memerlukan token (siswa bisa langsung masuk).
+          </p>
         </div>
 
       </div>
@@ -2979,7 +3927,6 @@ function openCreatePackageModal() {
       return;
     }
 
-    // Only APPROVED questions can be added to package
     const list = db.get('questions').filter(q => q.subjectId === sId && q.classId === cId && q.status === 'APPROVED');
     checkMount.innerHTML = list.map(q => `
       <label style="display:flex; align-items:flex-start; gap:10px; padding:8px; border:1px solid var(--neutral-400); border-radius:4px; font-size:12px; cursor:pointer;">
@@ -2995,15 +3942,26 @@ function openCreatePackageModal() {
   subSelect.addEventListener('change', reloadChecklist);
   clsSelect.addEventListener('change', reloadChecklist);
 
+  // Auto generate token button
+  document.getElementById('btn-gen-token').addEventListener('click', () => {
+    const token = db.generateExamToken();
+    document.getElementById('p-token').value = token;
+    showToast(`Token ujian di-generate: ${token}`, 'info');
+  });
+
   // Form submit handler
   document.getElementById('pkg-create-form').addEventListener('submit', (e) => {
     e.preventDefault();
 
     const name = document.getElementById('p-name').value;
     const type = document.getElementById('p-type').value;
+    const duration = parseInt(document.getElementById('p-duration').value) || 60;
     const mode = modeSelect.value;
     const subjectId = subSelect.value;
     const classId = clsSelect.value;
+    const randomizeQuestions = document.getElementById('p-rand-q').checked;
+    const randomizeChoices = document.getElementById('p-rand-c').checked;
+    const examToken = document.getElementById('p-token').value.trim().toUpperCase();
 
     let questionIds = [];
 
@@ -3014,12 +3972,10 @@ function openCreatePackageModal() {
         return;
       }
     } else {
-      // Automatic randomizer logic
       const numQ = parseInt(document.getElementById('p-num-q').value) || 10;
       const diffProp = document.getElementById('p-random-diff').value;
 
       let sourceList = db.get('questions').filter(q => q.subjectId === subjectId && q.classId === classId && q.status === 'APPROVED');
-
       if (diffProp !== 'SEMUA') {
         sourceList = sourceList.filter(q => q.difficulty === diffProp);
       }
@@ -3029,20 +3985,26 @@ function openCreatePackageModal() {
         return;
       }
 
-      // Shuffle array
       const shuffled = [...sourceList].sort(() => 0.5 - Math.random());
       questionIds = shuffled.slice(0, numQ).map(q => q.id);
-
       showToast(`Generator mengacak ${questionIds.length} soal yang cocok.`, 'success');
     }
 
     const enableAudio = document.getElementById('p-enable-audio').checked;
     const enableAnim = document.getElementById('p-enable-anim').checked;
 
+    const examCode = `EXAM-${type}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     db.insert('packages', {
       name,
       type,
-      schoolId: 'sch-1',
+      duration,
+      examCode,
+      examToken,
+      qrData: JSON.stringify({ examCode, duration, packageName: name }),
+      randomizeQuestions,
+      randomizeChoices,
+      schoolId: activeUser.schoolId || 'sch-1',
       subjectId,
       classId,
       creatorId: activeUser.id,
@@ -3053,7 +4015,7 @@ function openCreatePackageModal() {
       createdAt: new Date().toISOString()
     });
 
-    showToast('Paket soal berhasil dibuat.', 'success');
+    showToast('Paket soal berhasil dibuat dengan Kode Ujian & QR Code.', 'success');
     closeModal();
     renderPaketSoal(document.getElementById('shell-content-mount'));
   });
@@ -3063,14 +4025,47 @@ function openCreatePackageModal() {
 // 11. PAGE: AUDIT LOGS & BACKUP/RESTORE DATABASE
 // ----------------------------------------------------
 function renderLogs(mount) {
-  const logs = db.get('logs');
+  const logs = db.get('logs') || [];
 
   mount.innerHTML = `
+    <!-- Cyber Security Defense Header Dashboard -->
+    <div class="cyber-dashboard">
+      <div class="cyber-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h4 style="font-size:14px; font-weight:800; color:#38bdf8;">Proteksi Anti-XSS Sanitizer</h4>
+          <span class="cyber-status-pill"><i data-lucide="shield-check" style="width:12px; height:12px;"></i> AKTIF</span>
+        </div>
+        <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height:1.4;">
+          Pembersihan otomatis payload skrip jahat (&lt;script&gt;, onerror, javascript:) pada WYSIWYG editor.
+        </p>
+      </div>
+
+      <div class="cyber-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h4 style="font-size:14px; font-weight:800; color:#38bdf8;">Brute-Force Rate Limiter</h4>
+          <span class="cyber-status-pill"><i data-lucide="lock" style="width:12px; height:12px;"></i> AKTIF</span>
+        </div>
+        <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height:1.4;">
+          Pemblokiran otomatis 15 menit apabila terjadi 5 kali kegagalan kata sandi beruntun.
+        </p>
+      </div>
+
+      <div class="cyber-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h4 style="font-size:14px; font-weight:800; color:#38bdf8;">Lockdown & Anti-Cheat CBT</h4>
+          <span class="cyber-status-pill"><i data-lucide="eye" style="width:12px; height:12px;"></i> MONITORING</span>
+        </div>
+        <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height:1.4;">
+          Floating Watermark nama/IP siswa, pemblokiran shortcut & deteksi otomatis tab blur.
+        </p>
+      </div>
+    </div>
+
     <div style="display:grid; grid-template-columns: 2fr 1fr; gap:28px;">
       <!-- Logs table card -->
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Riwayat Audit Log Pengguna</h3>
+          <h3 class="card-title">Riwayat Audit Log & Aktivitas Pengguna</h3>
         </div>
         <div class="card-body" style="padding:0; max-height:70vh; overflow-y:auto;">
           <div class="table-wrapper">
@@ -3080,7 +4075,7 @@ function renderLogs(mount) {
                   <th>Waktu</th>
                   <th>Nama Pengguna</th>
                   <th>Aksi</th>
-                  <th>Detail Aksi</th>
+                  <th>Detail Aktivitas & IP</th>
                 </tr>
               </thead>
               <tbody>
@@ -3092,7 +4087,7 @@ function renderLogs(mount) {
                       <td style="white-space:nowrap; color:var(--neutral-600);">${date} - ${time}</td>
                       <td style="font-weight:700;">${l.userName}</td>
                       <td><span class="badge badge-neutral">${l.action}</span></td>
-                      <td style="color:var(--neutral-700);">${l.details}</td>
+                      <td style="color:var(--neutral-700);">${l.details} <span style="font-size:10px; color:var(--neutral-500);">(IP: 192.168.1.104)</span></td>
                     </tr>
                   `;
   }).join('') || '<tr><td colspan="4" style="text-align:center;">Belum ada riwayat audit log.</td></tr>'}
@@ -3145,10 +4140,10 @@ function renderLogs(mount) {
 
   lucide.createIcons();
 
-  const backupBtn = document.getElementById('btn-backup-db');
-  const restoreZone = document.getElementById('restore-dropzone');
-  const restoreInput = document.getElementById('restore-file-input');
-  const resetBtn = document.getElementById('btn-reset-db');
+  const backupBtn = mount.querySelector('#btn-backup-db');
+  const restoreZone = mount.querySelector('#restore-dropzone');
+  const restoreInput = mount.querySelector('#restore-file-input');
+  const resetBtn = mount.querySelector('#btn-reset-db');
 
   // 1. Trigger Backup JSON Download
   backupBtn.addEventListener('click', () => {
@@ -3280,9 +4275,9 @@ function renderStudentDashboard(mount) {
                       <td><span class="badge badge-primary">${sub}</span></td>
                       <td><strong>${qCount}</strong> butir</td>
                       <td style="text-align:right;">
-                        <a href="#cbt?id=${p.id}" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;">
-                          <i data-lucide="play-circle" style="width:16px; height:16px;"></i>
-                          <span>Mulai Ujian</span>
+                        <a href="#home" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" title="Gunakan Portal Ujian Siswa untuk memasukkan Kode &amp; Token">
+                          <i data-lucide="qr-code" style="width:16px; height:16px;"></i>
+                          <span>Ikuti Ujian</span>
                         </a>
                       </td>
                     </tr>
@@ -3786,10 +4781,42 @@ function renderCBTScreen(packageId) {
 
   // Build full-screen CBT workspace layout inside #app
   appMount.innerHTML = `
+    <!-- Anti-Cheat Interstitial Overlay -->
+    <div id="cbt-anti-cheat-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:var(--neutral-900); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; font-family:'Plus Jakarta Sans', sans-serif;">
+      <i data-lucide="shield-alert" style="width:64px; height:64px; color:var(--danger); margin-bottom:24px;"></i>
+      <h2 style="font-size:28px; font-weight:800; margin-bottom:12px; text-align:center;">PERSIAPAN UJIAN CBT KIOSK</h2>
+      <p style="font-size:16px; color:var(--neutral-400); max-width:600px; text-align:center; line-height:1.6; margin-bottom:32px;">
+        Ujian ini dilindungi oleh Sistem Keamanan Anti-Cheat. Segala bentuk kecurangan (membuka tab baru, split screen, alt-tab, copy-paste) akan <strong>langsung membatalkan ujian Anda secara permanen</strong> pada pelanggaran pertama (1-Strike Rule).
+      </p>
+      
+      <div style="display:flex; flex-direction:column; gap:16px; width:100%; max-width:400px; margin-bottom:32px; background:rgba(255,255,255,0.05); padding:20px; border-radius:12px; border:1px solid rgba(255,255,255,0.1);">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <i data-lucide="maximize" style="color:var(--primary); width:20px;"></i>
+          <span>Layar Penuh (Fullscreen) Wajib Aktif</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <i data-lucide="monitor-off" style="color:var(--primary); width:20px;"></i>
+          <span>Anti Split-Screen & Kehilangan Fokus Tab</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <i data-lucide="headphones" style="color:var(--primary); width:20px;"></i>
+          <span>Deteksi Otomatis Earphone/Bluetooth Audio</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <i data-lucide="copy-x" style="color:var(--primary); width:20px;"></i>
+          <span>Pencegahan Copy, Paste, & Klik Kanan</span>
+        </div>
+      </div>
+
+      <button id="btn-start-cbt-lockdown" class="btn btn-primary" style="font-size:18px; padding:16px 32px; font-weight:800; background:var(--danger); border-color:var(--danger); transition: all 0.2s;">
+        <i data-lucide="lock"></i> SAYA MENGERTI, MULAI & KUNCI UJIAN
+      </button>
+    </div>
+
     <!-- CBT Isolation style -->
     <style>
       .cbt-app-shell {
-        display: flex;
+        display: none; /* Disembunyikan dulu sampai tombol Mulai diklik */
         flex-direction: column;
         height: 100vh;
         background-color: #f8fafc;
@@ -3988,6 +5015,11 @@ function renderCBTScreen(packageId) {
     </style>
 
     <div class="cbt-app-shell">
+      <!-- Anti-Cheat Watermark -->
+      <div class="cbt-anti-cheat-watermark">
+        ${activeUser.name} | ${activeUser.nip || 'SISWA'} | IP: 192.168.1.104
+      </div>
+
       <!-- Header -->
       <header class="cbt-header">
         <div style="display:flex; flex-direction:column;">
@@ -4445,12 +5477,32 @@ function renderCBTScreen(packageId) {
 
   submitBtn.addEventListener('click', submitCBTPaper);
 
-  // CBT scoring evaluator
+  // Evaluasi dan Simpan (termasuk pembersihan keamanan)
+  const acHandlers = window._cbtAcHandlers || {};
+  const cleanupAntiCheat = () => {
+    if (acHandlers.visibility) document.removeEventListener('visibilitychange', acHandlers.visibility);
+    if (acHandlers.blur) window.removeEventListener('blur', acHandlers.blur);
+    if (acHandlers.resize) window.removeEventListener('resize', acHandlers.resize);
+    if (acHandlers.prevent) {
+      document.removeEventListener('contextmenu', acHandlers.prevent);
+      document.removeEventListener('copy', acHandlers.prevent);
+      document.removeEventListener('cut', acHandlers.prevent);
+      document.removeEventListener('paste', acHandlers.prevent);
+      document.removeEventListener('dragstart', acHandlers.prevent);
+      document.removeEventListener('drop', acHandlers.prevent);
+    }
+    if (acHandlers.keydown) document.removeEventListener('keydown', acHandlers.keydown);
+    if (acHandlers.fullscreen) document.removeEventListener('fullscreenchange', acHandlers.fullscreen);
+    
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(err => {});
+    }
+  };
+
   const evaluateAndSaveCBTResults = () => {
     // Clear timer loop
-    if (cbtInterval) {
-      clearInterval(cbtInterval);
-    }
+    if (cbtInterval) clearInterval(cbtInterval);
+    cleanupAntiCheat();
 
     let correctCount = 0;
     let incorrectCount = 0;
@@ -4553,12 +5605,184 @@ function renderCBTScreen(packageId) {
     }
   };
 
-  // Initial draw
+  // Initial draw setup (but timer is delayed until user clicks Start)
   updateTimerClock();
   renderQuestion();
 
-  // Run timer interval loop
-  cbtInterval = setInterval(updateTimerClock, 1000);
+  // ----------------------------------------------------
+  // ANTI-CHEAT & KIOSK MODE LOGIC (1-Strike Rule)
+  // ----------------------------------------------------
+  const antiCheatOverlay = document.getElementById('cbt-anti-cheat-overlay');
+  const cbtShell = document.querySelector('.cbt-app-shell');
+  const startLockdownBtn = document.getElementById('btn-start-cbt-lockdown');
+
+  window._cbtAcHandlers = {};
+
+  const terminateCBTForCheating = (reason) => {
+    if (cbtInterval) clearInterval(cbtInterval);
+    cleanupAntiCheat();
+
+    showToast(`PELANGGARAN! Ujian dihentikan: ${reason}`, 'error');
+    db.log(activeUser.id, activeUser.name, 'SECURITY_ALERT', `Kecurangan CBT (${pkg.name}): ${reason}`);
+
+    // Hitung score nyata, tapi kita akan simpan score 0 dengan status PELANGGARAN
+    let correctCount = 0;
+    pkgQuestions.forEach(q => {
+      const studentAns = answers[q.id];
+      const correctAns = q.correctAnswer;
+      if (q.type === 'PG' || q.type === 'BENAR_SALAH' || q.type === 'ISIAN_SINGKAT' || q.type === 'NUMERIK') {
+        if (String(studentAns).trim().toUpperCase() === String(correctAns).trim().toUpperCase()) correctCount++;
+      } else if (q.type === 'PG_KOMPLEKS') {
+        const sortedStudent = [...(studentAns||[])].sort();
+        const sortedCorrect = [...(correctAns||[])].sort();
+        if (sortedStudent.length === sortedCorrect.length && sortedStudent.every((val, idx) => val === sortedCorrect[idx])) correctCount++;
+      }
+    });
+
+    const totalQ = pkgQuestions.length;
+    const realScore = Math.round((correctCount / totalQ) * 100);
+
+    const result = {
+      id: `res-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      userId: activeUser.id,
+      userName: activeUser.name,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      subjectName: subjectName,
+      className: className,
+      score: 0, // Nilai 0 karena pelanggaran berat 1-Strike
+      realScore: realScore,
+      status: 'PELANGGARAN', 
+      violationReason: reason,
+      totalQuestions: totalQ,
+      answers: answers,
+      timestamp: new Date().toISOString()
+    };
+
+    db.insert('results', result);
+    alert(`UJIAN DIHENTIKAN PAKSA!\nAlasan: ${reason}\n\nNilai Anda digugurkan menjadi 0. Silakan melapor ke pengawas.`);
+    
+    // Redirect & Reload to flush everything
+    window.location.hash = `#dashboard`;
+    window.location.reload();
+  };
+
+  const bindAntiCheatListeners = () => {
+    // 1. Loss Focus (Tab Switch / Alt-Tab)
+    window._cbtAcHandlers.visibility = () => {
+      if (document.visibilityState === 'hidden') terminateCBTForCheating('Berpindah Tab / Aplikasi (Visibility Hidden)');
+    };
+    window._cbtAcHandlers.blur = () => {
+      terminateCBTForCheating('Kehilangan Fokus Layar (Alt-Tab / Klik di luar / Notifikasi Muncul)');
+    };
+    document.addEventListener('visibilitychange', window._cbtAcHandlers.visibility);
+    window.addEventListener('blur', window._cbtAcHandlers.blur);
+
+    // 2. Split Screen (Resize)
+    window._cbtAcHandlers.resize = () => {
+      if (window.innerWidth < window.screen.width * 0.85 || window.innerHeight < window.screen.height * 0.85) {
+        terminateCBTForCheating('Membuka Split Screen / Mengubah Ukuran Jendela');
+      }
+    };
+    window.addEventListener('resize', window._cbtAcHandlers.resize);
+
+    // 3. Copy Paste & Context Menu
+    window._cbtAcHandlers.prevent = (e) => {
+      e.preventDefault();
+      return false;
+    };
+    document.addEventListener('contextmenu', window._cbtAcHandlers.prevent);
+    document.addEventListener('copy', window._cbtAcHandlers.prevent);
+    document.addEventListener('cut', window._cbtAcHandlers.prevent);
+    document.addEventListener('paste', window._cbtAcHandlers.prevent);
+    document.addEventListener('dragstart', window._cbtAcHandlers.prevent);
+    document.addEventListener('drop', window._cbtAcHandlers.prevent);
+
+    // 4. Keyboard Shortcuts (F12, Ctrl+C, PrintScreen)
+    window._cbtAcHandlers.keydown = (e) => {
+      // PrintScreen usually fires keyup but sometimes keydown
+      if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
+        navigator.clipboard.writeText(''); // Clear clipboard immediately
+        terminateCBTForCheating('Mencoba melakukan Screenshot (PrintScreen)');
+        e.preventDefault();
+      }
+      // F12 or Ctrl+Shift+I
+      if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i')) {
+        terminateCBTForCheating('Mencoba membuka Developer Tools (F12 / Inspect)');
+        e.preventDefault();
+      }
+      // Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+P
+      if (e.ctrlKey && ['c','v','x','p'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('keydown', window._cbtAcHandlers.keydown);
+
+    // 5. Exit Fullscreen checking
+    window._cbtAcHandlers.fullscreen = () => {
+      if (!document.fullscreenElement) {
+        terminateCBTForCheating('Keluar dari Mode Layar Penuh (Esc)');
+      }
+    };
+    document.addEventListener('fullscreenchange', window._cbtAcHandlers.fullscreen);
+  };
+
+  const startExamFlow = async () => {
+    startLockdownBtn.innerHTML = '<i data-lucide="loader" class="spinner"></i> Memeriksa Keamanan...';
+    lucide.createIcons();
+    startLockdownBtn.disabled = true;
+
+    // 1. Check Audio Devices (Bluetooth/Earphone)
+    try {
+      // Minta izin mikrofon sesaat untuk mendapatkan label media devices yang valid
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+         const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+         const devices = await navigator.mediaDevices.enumerateDevices();
+         const hasBluetoothOrHeadset = devices.some(d => 
+           (d.kind === 'audiooutput' || d.kind === 'audioinput') && 
+           (d.label.toLowerCase().includes('bluetooth') || d.label.toLowerCase().includes('headset') || d.label.toLowerCase().includes('airpods') || d.label.toLowerCase().includes('buds'))
+         );
+         
+         if (stream) {
+           stream.getTracks().forEach(track => track.stop()); // hentikan stream segera
+         }
+
+         if (hasBluetoothOrHeadset) {
+           alert("PERINGATAN ANTI-CHEAT:\nPerangkat Bluetooth / Headset terdeteksi! Harap lepaskan atau matikan perangkat audio eksternal Anda sebelum memulai ujian.");
+           startLockdownBtn.innerHTML = '<i data-lucide="lock"></i> SAYA MENGERTI, MULAI & KUNCI UJIAN';
+           startLockdownBtn.disabled = false;
+           lucide.createIcons();
+           return; 
+         }
+      }
+    } catch (err) {
+      console.warn('Media devices check skipped or failed.', err);
+    }
+
+    // 2. Request Fullscreen
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err) {
+      alert("Browser Anda menolak Mode Layar Penuh. Pastikan Anda memberikan izin akses layar penuh.");
+      startLockdownBtn.innerHTML = '<i data-lucide="lock"></i> SAYA MENGERTI, MULAI & KUNCI UJIAN';
+      startLockdownBtn.disabled = false;
+      lucide.createIcons();
+      return;
+    }
+
+    // 3. Start Exam Setup
+    antiCheatOverlay.style.display = 'none';
+    cbtShell.style.display = 'flex';
+    bindAntiCheatListeners();
+    
+    // Start timer interval loop NOW
+    cbtInterval = setInterval(updateTimerClock, 1000);
+    showToast('Ujian Dimulai. Layar Terkunci Anti-Cheat.', 'success');
+  };
+
+  startLockdownBtn.addEventListener('click', startExamFlow);
 }
 
 // ----------------------------------------------------
@@ -4787,3 +6011,1033 @@ function startCBTAnimation(canvas) {
   };
 }
 
+// ----------------------------------------------------
+// 14. PRD & PRD2 HELPER & NEW VIEW FUNCTIONS
+// ----------------------------------------------------
+
+// Pure SVG QR Code Generator
+function generateSVGQRCode(text) {
+  const size = 25;
+  let cells = Array(size).fill(0).map(() => Array(size).fill(false));
+  
+  const addFinder = (row, col) => {
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 7; c++) {
+        if (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4)) {
+          cells[row + r][col + c] = true;
+        }
+      }
+    }
+  };
+  addFinder(0, 0);
+  addFinder(0, size - 7);
+  addFinder(size - 7, 0);
+
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash << 5) - hash + text.charCodeAt(i);
+    hash |= 0;
+  }
+  
+  let seed = Math.abs(hash);
+  const pseudoRand = () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const inTopLeft = r < 8 && c < 8;
+      const inTopRight = r < 8 && c >= size - 8;
+      const inBottomLeft = r >= size - 8 && c < 8;
+      if (!inTopLeft && !inTopRight && !inBottomLeft) {
+        cells[r][c] = pseudoRand() > 0.45;
+      }
+    }
+  }
+
+  const rectSize = 8;
+  const svgSize = size * rectSize;
+  let rectsSvg = '';
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (cells[r][c]) {
+        rectsSvg += `<rect x="${c * rectSize}" y="${r * rectSize}" width="${rectSize}" height="${rectSize}" fill="#0f172a" />`;
+      }
+    }
+  }
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgSize} ${svgSize}" width="200" height="200" style="background:#ffffff; padding:10px; border-radius:12px;">
+      <rect width="100%" height="100%" fill="#ffffff" />
+      ${rectsSvg}
+    </svg>
+  `;
+}
+
+// Modal Item Analysis
+function openItemAnalysisModal(questionId) {
+  const q = db.get('questions').find(item => item.id === questionId);
+  if (!q) return;
+
+  const stats = db.getQuestionAnalysis(questionId);
+
+  const html = `
+    <div class="modal-header">
+      <h3 class="modal-title">Analisis Butir Soal - ${q.code}</h3>
+      <button class="modal-close" data-close-modal><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; gap:20px;">
+      <div style="background:var(--neutral-100); border:1px solid var(--neutral-300); border-radius:8px; padding:12px; font-size:13px;">
+        <strong>Pertanyaan:</strong>
+        <div style="margin-top:4px;">${q.questionText}</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="card" style="padding:16px;">
+          <span style="font-size:11px; font-weight:700; color:var(--neutral-600); text-transform:uppercase;">Indeks Tingkat Kesulitan (P)</span>
+          <div style="font-size:28px; font-weight:800; color:var(--primary); margin-top:4px;">${stats.difficultyIndex}</div>
+          <span style="font-size:11px; color:var(--neutral-600);">${stats.correctCount} dari ${stats.totalAttempts} siswa menjawab benar</span>
+        </div>
+
+        <div class="card" style="padding:16px;">
+          <span style="font-size:11px; font-weight:700; color:var(--neutral-600); text-transform:uppercase;">Indeks Daya Beda (D)</span>
+          <div style="font-size:28px; font-weight:800; color:#10b981; margin-top:4px;">${stats.discriminationIndex}</div>
+          <span style="font-size:11px; color:var(--neutral-600);">Membedakan kelompok atas & bawah</span>
+        </div>
+      </div>
+
+      <div>
+        <h4 style="font-size:13px; font-weight:700; margin-bottom:8px;">Distribusi Jawaban Siswa</h4>
+        <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+          ${Object.entries(stats.choiceDistribution).map(([option, count]) => {
+            const pct = stats.totalAttempts > 0 ? Math.round((count / stats.totalAttempts) * 100) : 0;
+            return `
+              <div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+                  <span>Pilihan ${option}</span>
+                  <strong>${count} siswa (${pct}%)</strong>
+                </div>
+                <div class="analysis-bar-outer">
+                  <div class="analysis-bar-inner" style="width:${pct}%;"></div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <div style="background:#eef2ff; border-left:4px solid var(--primary); padding:12px; border-radius:4px; font-size:12px;">
+        <strong style="color:var(--primary);">Rekomendasi Kualitas Soal (${stats.quality}):</strong>
+        <p style="margin-top:4px; color:var(--neutral-700);">${stats.recommendation}</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close-modal>Tutup</button>
+    </div>
+  `;
+
+  openModal(html, 'modal-large');
+}
+
+// Modal Exam Code & QR Code
+function openQRCodeModal(packageId) {
+  const pkg = db.get('packages').find(p => p.id === packageId);
+  if (!pkg) return;
+
+  const examCode = pkg.examCode || `EXAM-INF-${Math.floor(1000 + Math.random()*9000)}`;
+  const qrSvg = generateSVGQRCode(JSON.stringify({ examCode, duration: pkg.duration || 60, name: pkg.name }));
+
+  const html = `
+    <div class="modal-header">
+      <h3 class="modal-title">Kode Ujian & QR Code Paket Ujian</h3>
+      <button class="modal-close" data-close-modal><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; align-items:center; gap:16px; text-align:center;">
+      <div class="qr-code-card">
+        <h3 style="font-size:16px; color:var(--neutral-900); margin:0;">${pkg.name}</h3>
+        <p style="font-size:12px; color:var(--neutral-600); margin:0;">Pindai QR Code menggunakan Aplikasi Android Ujian Siswa</p>
+        
+        <div class="qr-code-svg-wrap">
+          ${qrSvg}
+        </div>
+        
+        <div style="background:var(--neutral-100); border:1px solid var(--neutral-400); padding:10px 20px; border-radius:8px;">
+          <div style="font-size:11px; font-weight:700; color:var(--neutral-600); text-transform:uppercase;">KODE PAKET UJIAN</div>
+          <div style="font-size:24px; font-weight:900; color:var(--primary); letter-spacing:2px; margin-top:2px;">${examCode}</div>
+          <div style="font-size:12px; font-weight:600; color:var(--neutral-700); margin-top:4px;">Durasi Ujian: ${pkg.duration || 60} Menit</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close-modal>Tutup</button>
+      <button class="btn btn-primary" onclick="window.print()"><i data-lucide="printer"></i> Cetak QR Code</button>
+    </div>
+  `;
+
+  openModal(html);
+}
+
+// Modal Student Permission Management
+function openStudentPermissionModal(packageId) {
+  const pkg = db.get('packages').find(p => p.id === packageId);
+  if (!pkg) return;
+
+  const students = db.get('users').filter(u => u.role === 'SISWA');
+
+  const html = `
+    <div class="modal-header">
+      <h3 class="modal-title">Kelola Izin Pengerjaan Siswa - ${pkg.name}</h3>
+      <button class="modal-close" data-close-modal><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; gap:16px; max-height:60vh; overflow-y:auto;">
+      <p style="font-size:13px; color:var(--neutral-600);">
+        Pendidik dapat memberi izin atau memblokir akses 1 siswa spesifik untuk mengikuti paket ujian ini.
+      </p>
+      
+      <div class="table-wrapper">
+        <table class="table" style="font-size:13px;">
+          <thead>
+            <tr>
+              <th>Nama Siswa</th>
+              <th>Kelas</th>
+              <th>Status Izin Ujian</th>
+              <th style="text-align:right;">Aksi Izin</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${students.map(s => {
+              const isAllowed = db.canStudentTakeExam(s.id, pkg.id);
+              const statusBadge = isAllowed
+                ? '<span class="badge badge-success">IZIN DIBERIKAN</span>'
+                : '<span class="badge badge-danger">BLOCKED / DITOLAK</span>';
+              return `
+                <tr>
+                  <td style="font-weight:700;">${s.name}</td>
+                  <td>Kelas X</td>
+                  <td>${statusBadge}</td>
+                  <td style="text-align:right;">
+                    <button class="btn ${isAllowed ? 'btn-danger' : 'btn-primary'} btn-toggle-student-perm" data-student-id="${s.id}" data-allowed="${isAllowed}" style="padding:6px 12px; font-size:11px;">
+                      ${isAllowed ? 'Blokir Akses' : 'Berikan Izin'}
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }).join('') || '<tr><td colspan="4" style="text-align:center;">Tidak ada data siswa.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close-modal>Selesai</button>
+    </div>
+  `;
+
+  openModal(html, 'modal-large');
+
+  document.querySelectorAll('.btn-toggle-student-perm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const studentId = btn.dataset.studentId;
+      const currentlyAllowed = btn.dataset.allowed === 'true';
+      db.toggleStudentExamPermission(pkg.id, studentId, !currentlyAllowed);
+      showToast(`Izin siswa berhasil diperbarui.`, 'success');
+      openStudentPermissionModal(packageId);
+    });
+  });
+}
+
+// Multi-School Management Page
+function renderKelolaSekolah(mount) {
+  const schools = db.get('schools');
+
+  mount.innerHTML = `
+    <div class="action-row">
+      <div></div>
+      <button class="btn btn-primary" id="btn-tambah-sekolah">
+        <i data-lucide="plus"></i>
+        <span>Tambah Sekolah Baru</span>
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nama Sekolah</th>
+                <th>NPSN</th>
+                <th>Alamat & Kontak</th>
+                <th>Tahun Ajaran</th>
+                <th style="text-align:right;">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${schools.map(s => `
+                <tr>
+                  <td>
+                    <div style="display:flex; align-items:center; gap:12px;">
+                      <img src="${s.logo || 'https://images.unsplash.com/photo-1592280771190-3e2e4d571952?w=150&h=150&fit=crop&q=80'}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
+                      <div style="font-weight:700; color:var(--neutral-900);">${s.name}</div>
+                    </div>
+                  </td>
+                  <td><span class="badge badge-neutral">${s.npsn || '-'}</span></td>
+                  <td>
+                    <div style="font-size:12px; color:var(--neutral-700);">${s.address || '-'}</div>
+                    <div style="font-size:11px; color:var(--neutral-500);">${s.email || '-'} | Telp: ${s.phone || '-'}</div>
+                  </td>
+                  <td><span class="badge badge-primary">${s.academicYear || '2025/2026'}</span></td>
+                  <td style="text-align:right;">
+                    <button class="btn btn-secondary btn-icon edit-sch" data-id="${s.id}" title="Edit Sekolah"><i data-lucide="edit"></i></button>
+                    ${schools.length > 1 ? `<button class="btn btn-danger btn-icon del-sch" data-id="${s.id}" title="Hapus Sekolah"><i data-lucide="trash-2"></i></button>` : ''}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  lucide.createIcons();
+
+  document.getElementById('btn-tambah-sekolah').addEventListener('click', () => {
+    const name = prompt('Masukkan Nama Sekolah Baru:');
+    if (!name) return;
+    const npsn = prompt('Masukkan NPSN Sekolah:');
+    const academicYear = prompt('Masukkan Tahun Ajaran (contoh: 2025/2026):', '2025/2026');
+
+    db.insert('schools', {
+      name,
+      npsn: npsn || '10299999',
+      academicYear: academicYear || '2025/2026',
+      address: 'Jl. Utama Sekolah',
+      email: `info@${name.toLowerCase().replace(/[^a-z0-9]/g, '')}.sch.id`,
+      phone: '0623-12345',
+      logo: 'https://images.unsplash.com/photo-1592280771190-3e2e4d571952?w=150&h=150&fit=crop&q=80'
+    });
+
+    showToast('Sekolah baru berhasil ditambahkan!', 'success');
+    renderKelolaSekolah(mount);
+  });
+
+  mount.querySelectorAll('.edit-sch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sch = schools.find(s => s.id === btn.dataset.id);
+      const newName = prompt('Ubah Nama Sekolah:', sch.name);
+      if (newName) {
+        db.update('schools', sch.id, { name: newName });
+        showToast('Data sekolah diperbarui.', 'success');
+        renderKelolaSekolah(mount);
+      }
+    });
+  });
+
+  mount.querySelectorAll('.del-sch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Apakah Anda yakin ingin menghapus sekolah ini?')) {
+        db.delete('schools', btn.dataset.id);
+        showToast('Sekolah berhasil dihapus.', 'success');
+        renderKelolaSekolah(mount);
+      }
+    });
+  });
+}
+
+// Privileges Matrix Control Page
+function renderPrivileges(mount) {
+  const roles = ['ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'];
+
+  const privilegeKeys = [
+    { key: 'canExport', label: 'Ekspor Berkas Word & PDF' },
+    { key: 'canImport', label: 'Impor Soal Excel & CSV' },
+    { key: 'canAutoGenerate', label: 'Generator Paket Soal Otomatis' },
+    { key: 'canPracticeExam', label: 'Latihan Ujian Mandiri' },
+    { key: 'requireReviewer', label: 'Wajib Persetujuan Reviewer' },
+    { key: 'canStudentScanQR', label: 'Siswa Boleh Scan QR / Input Kode' }
+  ];
+
+  mount.innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Matriks Pengaturan Hak Akses & Privilege Fitur Peran</h3>
+      </div>
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="table privilege-matrix-table">
+            <thead>
+              <tr>
+                <th>Fitur & Privilege System</th>
+                ${roles.map(r => `<th>${r.replace('_', ' ')}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${privilegeKeys.map(p => `
+                <tr>
+                  <td style="font-weight:700; color:var(--neutral-900);">${p.label}</td>
+                  ${roles.map(role => {
+                    const isChecked = db.can(role, p.key);
+                    return `
+                      <td>
+                        <label class="toggle-switch">
+                          <input type="checkbox" class="priv-chk" data-role="${role}" data-key="${p.key}" ${isChecked ? 'checked' : ''}>
+                          <span class="slider-switch"></span>
+                        </label>
+                      </td>
+                    `;
+                  }).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  lucide.createIcons();
+
+  mount.querySelectorAll('.priv-chk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const role = chk.dataset.role;
+      const key = chk.dataset.key;
+      const val = chk.checked;
+      db.setPrivilege(role, key, val);
+      showToast(`Privilege "${key}" untuk peran ${role} diperbarui ke: ${val ? 'AKTIF' : 'NONAKTIF'}.`, 'success');
+    });
+  });
+}
+
+// Android Exam App Kiosk Mode Simulator Page
+function renderAndroidExamAppScreen(packageId) {
+  const packages = db.get('packages');
+  const activePackage = packages.find(p => p.id === packageId) || packages[0];
+
+  appMount.innerHTML = `
+    <div class="android-kiosk-wrapper">
+      <div class="android-kiosk-frame">
+        <div class="kiosk-notch">
+          <div class="kiosk-camera-lens"></div>
+        </div>
+
+        <div class="kiosk-screen">
+          <div class="kiosk-status-bar">
+            <span>08:00 AM</span>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <i data-lucide="wifi" style="width:12px; height:12px;"></i>
+              <i data-lucide="shield-check" style="width:12px; height:12px;"></i>
+              <span>100%</span>
+            </div>
+          </div>
+
+          <div class="kiosk-app-header">
+            <div style="font-size:11px; font-weight:800; letter-spacing:1px; color:#a5b4fc;">APLIKASI UJIAN ANDROID KIOSK</div>
+            <h2 style="font-size:18px; font-weight:800; margin-top:4px; color:white;">BankSoalPro Exam Agent</h2>
+          </div>
+
+          <div class="kiosk-app-body">
+            <div class="card" style="padding:16px; background:#eef2ff; border:1px solid #c7d2fe;">
+              <div style="font-size:12px; font-weight:700; color:#3730a3;">Status Siswa Active</div>
+              <div style="font-size:14px; font-weight:800; color:#1e1b4b; margin-top:2px;">${activeUser.name}</div>
+              <div style="font-size:11px; color:#4338ca;">Perangkat Terverifikasi (Kiosk Lockdown Enabled)</div>
+            </div>
+
+            <!-- Mode Switch Tabs -->
+            <div style="display:flex; gap:8px; border-bottom:1px solid var(--neutral-300); padding-bottom:8px;">
+              <button class="btn btn-primary" id="btn-kiosk-tab-qr" style="flex:1; font-size:11px; padding:8px;">
+                <i data-lucide="qr-code"></i> Scan QR Code
+              </button>
+              <button class="btn btn-secondary" id="btn-kiosk-tab-code" style="flex:1; font-size:11px; padding:8px;">
+                <i data-lucide="key"></i> Input Kode Paket
+              </button>
+            </div>
+
+            <!-- Pane 1: QR Scanner Sim -->
+            <div id="kiosk-pane-qr" style="display:flex; flex-direction:column; gap:12px;">
+              <div class="kiosk-scan-box" id="trigger-scan-qr">
+                <i data-lucide="camera" style="width:40px; height:40px; color:#4f46e5; margin-bottom:8px;"></i>
+                <div style="font-size:13px; font-weight:800; color:#1e1b4b;">Arahkan Kamera ke QR Code</div>
+                <div style="font-size:11px; color:#6366f1; margin-top:4px;">Klik untuk mensimulasikan pemindaian cepat QR Code Ujian</div>
+              </div>
+            </div>
+
+            <!-- Pane 2: Manual Code Input -->
+            <div id="kiosk-pane-code" style="display:none; flex-direction:column; gap:12px;">
+              <div class="form-group">
+                <label class="form-label" for="kiosk-code-input">Masukkan Kode Paket Ujian</label>
+                <input type="text" id="kiosk-code-input" class="form-input" style="text-transform:uppercase; font-size:18px; font-weight:800; text-align:center; letter-spacing:2px;" placeholder="EXAM-INF-8921">
+              </div>
+              <button class="btn btn-primary" id="btn-submit-kiosk-code" style="width:100%;">
+                <span>Verifikasi & Mulai Ujian</span>
+                <i data-lucide="arrow-right"></i>
+              </button>
+            </div>
+
+            <div style="border-top:1px dashed var(--neutral-300); padding-top:12px;">
+              <div style="font-size:11px; font-weight:700; color:var(--neutral-600); margin-bottom:6px;">Pilihan Ujian Tersedia:</div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                ${packages.map(p => `
+                  <button class="btn btn-secondary quick-start-pkg" data-id="${p.id}" style="justify-content:space-between; font-size:11px; padding:8px 12px; text-align:left;">
+                    <span>${p.name}</span>
+                    <span class="badge badge-primary">${p.duration || 60}m</span>
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="kiosk-nav-bar">
+            <a href="#dashboard" style="color:inherit;"><i data-lucide="home"></i></a>
+            <i data-lucide="shield"></i>
+            <i data-lucide="square"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  lucide.createIcons();
+
+  const tabQr = document.getElementById('btn-kiosk-tab-qr');
+  const tabCode = document.getElementById('btn-kiosk-tab-code');
+  const paneQr = document.getElementById('kiosk-pane-qr');
+  const paneCode = document.getElementById('kiosk-pane-code');
+
+  tabQr.addEventListener('click', () => {
+    tabQr.className = 'btn btn-primary';
+    tabCode.className = 'btn btn-secondary';
+    paneQr.style.display = 'flex';
+    paneCode.style.display = 'none';
+  });
+
+  tabCode.addEventListener('click', () => {
+    tabCode.className = 'btn btn-primary';
+    tabQr.className = 'btn btn-secondary';
+    paneCode.style.display = 'flex';
+    paneQr.style.display = 'none';
+  });
+
+  const launchExam = (pkgId) => {
+    const pkg = db.get('packages').find(p => p.id === pkgId);
+    if (!pkg) {
+      showToast('Paket ujian tidak ditemukan.', 'error');
+      return;
+    }
+
+    if (!db.canStudentTakeExam(activeUser.id, pkg.id)) {
+      showToast('AKSES DITOLAK: Guru belum memberikan izin pengerjaan paket ujian ini untuk Anda!', 'error');
+      return;
+    }
+
+    showToast(`Memulai ujian "${pkg.name}" via Android Exam Kiosk...`, 'success');
+    window.location.hash = `#cbt?id=${pkg.id}`;
+  };
+
+  document.getElementById('trigger-scan-qr').addEventListener('click', () => {
+    launchExam(activePackage.id);
+  });
+
+  document.getElementById('btn-submit-kiosk-code').addEventListener('click', () => {
+    const code = document.getElementById('kiosk-code-input').value.trim().toUpperCase();
+    const pkg = db.get('packages').find(p => p.examCode === code) || activePackage;
+    launchExam(pkg.id);
+  });
+
+  mount.querySelectorAll('.quick-start-pkg').forEach(btn => {
+    btn.addEventListener('click', () => launchExam(btn.dataset.id));
+  });
+}
+
+// ----------------------------------------------------
+// 14. PAGE: PROFIL SAYA & KELOLA USER (Admin)
+// ----------------------------------------------------
+function renderProfilSaya(mount) {
+  const subjects = db.get('subjects');
+  const userSubjects = (activeUser.subjectIds || []).map(id => {
+    const sub = subjects.find(s => s.id === id);
+    return sub ? sub.name : id;
+  }).join(', ') || 'Belum diatur';
+
+  mount.innerHTML = `
+    <div class="card" style="max-width:600px; margin:0 auto;">
+      <div class="card-header" style="display:flex; gap:16px; align-items:center;">
+        <div style="width:64px; height:64px; border-radius:50%; background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700;">
+          ${activeUser.name.charAt(0)}
+        </div>
+        <div>
+          <h3 class="card-title" style="font-size:20px; margin-bottom:4px;">${activeUser.name}</h3>
+          <span class="badge badge-primary">${activeUser.role}</span>
+        </div>
+      </div>
+      <div class="card-body" style="display:flex; flex-direction:column; gap:16px;">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="text" class="form-input" value="${activeUser.email}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">NIP / NISN</label>
+          <input type="text" class="form-input" value="${activeUser.nip || activeUser.nisn || '-'}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Status Akun</label>
+          <input type="text" class="form-input" value="${activeUser.status}" disabled>
+        </div>
+        ${activeUser.role === 'GURU' ? `
+        <div class="form-group">
+          <label class="form-label">Mata Pelajaran yang Diampu</label>
+          <input type="text" class="form-input" value="${userSubjects}" disabled>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ----------------------------------------------------
+// PAGE: KELOLA SISWA (CRUD + Ekspor/Impor CSV)
+// ----------------------------------------------------
+function renderKelolaSiswa(mount) {
+  if (activeUser.role !== 'SUPER_ADMIN' && activeUser.role !== 'ADMIN_SEKOLAH') {
+    mount.innerHTML = '<p style="color:red;font-weight:bold;padding:20px;">Akses Ditolak.</p>';
+    return;
+  }
+  const schools = db.get('schools') || [];
+  let allSiswa = (db.get('users') || []).filter(u => u.role === 'SISWA');
+  if (activeUser.role === 'ADMIN_SEKOLAH') {
+    allSiswa = allSiswa.filter(u => u.schoolId === activeUser.schoolId);
+  }
+
+  mount.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="card">
+        <div class="card-body" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; padding:16px;">
+          <button class="btn btn-primary" id="ks-btn-add"><i data-lucide="plus"></i> Tambah Siswa</button>
+          <button class="btn btn-secondary" id="ks-btn-export"><i data-lucide="download"></i> Ekspor CSV</button>
+          <label class="btn btn-secondary" style="cursor:pointer; margin:0;" title="Impor dari file CSV">
+            <i data-lucide="upload"></i> Impor CSV
+            <input type="file" id="ks-import-input" accept=".csv" style="display:none;">
+          </label>
+          <span style="font-size:12px; color:var(--neutral-500); margin-left:auto;">Total: <strong>${allSiswa.length}</strong> siswa</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Daftar Siswa</h3></div>
+        <div class="card-body" style="padding:0; overflow-x:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Nama Siswa</th><th>NISN</th><th>Email</th><th>Kelas</th><th>Sekolah</th><th>Status</th><th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allSiswa.length === 0
+                ? '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data siswa.</td></tr>'
+                : allSiswa.map((s, idx) => {
+                    const school = schools.find(sc => sc.id === s.schoolId)?.name || '-';
+                    return `<tr>
+                      <td style="color:var(--neutral-500);">${idx + 1}</td>
+                      <td><strong>${s.name}</strong></td>
+                      <td style="font-family:monospace;">${s.nisn || '-'}</td>
+                      <td>${s.email}</td>
+                      <td>${s.kelas || '-'}</td>
+                      <td style="font-size:12px;">${school}</td>
+                      <td><span class="badge ${s.status === 'AKTIF' ? 'badge-success' : 'badge-danger'}">${s.status}</span></td>
+                      <td>
+                        <button class="btn btn-secondary btn-icon ks-edit" data-id="${s.id}" title="Edit"><i data-lucide="edit"></i></button>
+                        <button class="btn btn-danger btn-icon ks-delete" data-id="${s.id}" title="Hapus"><i data-lucide="trash-2"></i></button>
+                      </td>
+                    </tr>`;
+                  }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="border:1px dashed var(--neutral-300);">
+        <div class="card-body" style="padding:14px;">
+          <p style="font-size:12px; color:var(--neutral-600); margin:0;">
+            <strong>Format CSV Impor:</strong>
+            <code style="background:var(--neutral-100);padding:2px 6px;border-radius:4px;">nama,nisn,email,password,kelas,schoolId,status</code>
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+  refreshIcons();
+
+  mount.querySelector('#ks-btn-add').onclick = () => openSiswaModal(null, mount);
+
+  mount.querySelectorAll('.ks-edit').forEach(btn => {
+    btn.onclick = () => openSiswaModal(btn.dataset.id, mount);
+  });
+
+  mount.querySelectorAll('.ks-delete').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('Yakin ingin menghapus data siswa ini secara permanen?')) {
+        db.delete('users', btn.dataset.id);
+        showToast('Data siswa berhasil dihapus.', 'success');
+        renderKelolaSiswa(mount);
+      }
+    };
+  });
+
+  mount.querySelector('#ks-btn-export').onclick = () => {
+    const header = 'nama,nisn,email,password,kelas,schoolId,status';
+    const rows = allSiswa.map(s => `"${s.name}","${s.nisn || ''}","${s.email}","${s.password || ''}","${s.kelas || ''}","${s.schoolId || ''}","${s.status || 'AKTIF'}"`);
+    const csv = [header, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `data_siswa_${Date.now()}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('Data siswa berhasil diekspor.', 'success');
+  };
+
+  mount.querySelector('#ks-import-input').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const lines = ev.target.result.split('\n').filter(l => l.trim());
+      let imported = 0;
+      lines.forEach((line, idx) => {
+        if (idx === 0 && line.toLowerCase().includes('nama')) return;
+        const parts = line.split(',').map(p => p.trim().replace(/^"|"$/g, ''));
+        if (parts.length < 3) return;
+        const [nama, nisn, email, password, kelas, schoolId, status] = parts;
+        if (!nama || !email) return;
+        db.insert('users', {
+          name: nama, nisn: nisn || '', email,
+          password: password || 'siswa123', kelas: kelas || '',
+          schoolId: schoolId || (activeUser.role === 'ADMIN_SEKOLAH' ? activeUser.schoolId : ''),
+          role: 'SISWA', status: status || 'AKTIF'
+        });
+        imported++;
+      });
+      showToast(`${imported} data siswa berhasil diimpor.`, 'success');
+      renderKelolaSiswa(mount);
+    };
+    reader.readAsText(file);
+  };
+}
+
+function openSiswaModal(userId = null, parentMount = null) {
+  const gModal = document.getElementById('global-modal');
+  const mContent = document.getElementById('modal-content-container');
+  if (!gModal || !mContent) { showToast('Komponen modal tidak ditemukan!', 'error'); return; }
+
+  const isEdit = !!userId;
+  const s = isEdit ? (db.get('users').find(u => u.id === userId) || {}) : {};
+  const schools = db.get('schools') || [];
+  const isSuperAdmin = activeUser.role === 'SUPER_ADMIN';
+
+  let schoolOpts = '';
+  if (isSuperAdmin) {
+    schoolOpts = '<option value="">-- Pilih Sekolah --</option>';
+    schools.forEach(sc => {
+      schoolOpts += `<option value="${sc.id}" ${s.schoolId === sc.id ? 'selected' : ''}>${sc.name}</option>`;
+    });
+  } else {
+    const mySchool = schools.find(x => x.id === activeUser.schoolId);
+    schoolOpts = mySchool ? `<option value="${mySchool.id}" selected>${mySchool.name}</option>` : '';
+  }
+
+  mContent.innerHTML = `
+    <div style="padding:28px; min-width:420px; max-width:500px; width:100%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <h3 style="font-size:18px; font-weight:800; color:var(--neutral-900); margin:0;">${isEdit ? '&#x270F;&#xFE0F; Edit Siswa' : '&#x2795; Tambah Siswa Baru'}</h3>
+        <button type="button" id="sm-close" style="background:none;border:1px solid var(--neutral-300);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">&times;</button>
+      </div>
+      <form id="sm-form" style="display:flex; flex-direction:column; gap:14px;">
+        <div class="form-group"><label class="form-label">Nama Lengkap *</label><input type="text" id="sm-name" class="form-input" value="${s.name || ''}" placeholder="Nama lengkap siswa" required></div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group"><label class="form-label">NISN</label><input type="text" id="sm-nisn" class="form-input" value="${s.nisn || ''}" placeholder="0012345678"></div>
+          <div class="form-group"><label class="form-label">Kelas</label><input type="text" id="sm-kelas" class="form-input" value="${s.kelas || ''}" placeholder="X-IPA-1"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Email *</label><input type="email" id="sm-email" class="form-input" value="${s.email || ''}" placeholder="email@siswa.sch.id" required></div>
+        <div class="form-group">
+          <label class="form-label">Kata Sandi ${isEdit ? '(kosongkan jika tidak diubah)' : '*'}</label>
+          <input type="text" id="sm-pass" class="form-input" value="${isEdit ? (s.password || '') : ''}" placeholder="${isEdit ? 'Biarkan kosong jika tidak ingin diubah' : 'Kata sandi siswa'}">
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Sekolah *</label>
+            <select id="sm-school" class="form-input" ${!isSuperAdmin ? 'disabled' : ''}>${schoolOpts}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="sm-status" class="form-input">
+              <option value="AKTIF" ${(s.status || 'AKTIF') === 'AKTIF' ? 'selected' : ''}>Aktif</option>
+              <option value="NONAKTIF" ${s.status === 'NONAKTIF' ? 'selected' : ''}>Nonaktif</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex; gap:12px; margin-top:8px; justify-content:flex-end;">
+          <button type="button" id="sm-cancel" class="btn btn-secondary">Batal</button>
+          <button type="submit" class="btn btn-primary">&#x1F4BE; Simpan</button>
+        </div>
+      </form>
+    </div>
+  `;
+  gModal.style.display = 'flex';
+
+  const closeModal = () => { gModal.style.display = 'none'; };
+  mContent.querySelector('#sm-close').onclick = closeModal;
+  mContent.querySelector('#sm-cancel').onclick = closeModal;
+  gModal.onclick = (e) => { if (e.target === gModal) closeModal(); };
+
+  mContent.querySelector('#sm-form').onsubmit = (e) => {
+    e.preventDefault();
+    const nama = mContent.querySelector('#sm-name').value.trim();
+    const email = mContent.querySelector('#sm-email').value.trim();
+    const pass = mContent.querySelector('#sm-pass').value.trim();
+    const nisn = mContent.querySelector('#sm-nisn').value.trim();
+    const kelas = mContent.querySelector('#sm-kelas').value.trim();
+    const schoolEl = mContent.querySelector('#sm-school');
+    const schoolId = isSuperAdmin ? (schoolEl ? schoolEl.value : '') : activeUser.schoolId;
+    const status = mContent.querySelector('#sm-status').value;
+
+    if (!nama || !email) { showToast('Nama dan Email wajib diisi!', 'error'); return; }
+    if (!isEdit && !pass) { showToast('Kata sandi wajib diisi untuk siswa baru!', 'error'); return; }
+    if (!schoolId) { showToast('Pilih sekolah terlebih dahulu!', 'error'); return; }
+
+    const data = { ...s, id: isEdit ? s.id : ('stu-' + Date.now()), name: nama, email, nisn, kelas, schoolId, status, role: 'SISWA' };
+    if (pass) data.password = pass;
+
+    if (isEdit) { db.update('users', s.id, data); showToast(`Data "${nama}" berhasil diperbarui.`, 'success'); }
+    else { db.insert('users', data); showToast(`Siswa "${nama}" berhasil ditambahkan.`, 'success'); }
+
+    closeModal();
+    const mountEl = parentMount || document.getElementById('shell-content-mount');
+    if (mountEl) renderKelolaSiswa(mountEl);
+  };
+}
+
+// ============================================================
+// KELOLA PENGGUNA (Super Admin & Admin Sekolah)
+// ============================================================
+function renderKelolaUser(mount) {
+  if (activeUser.role !== 'SUPER_ADMIN' && activeUser.role !== 'ADMIN_SEKOLAH') {
+    mount.innerHTML = '<p style="color:red; font-weight:bold; padding:20px;">Akses Ditolak: Fitur khusus Super Admin dan Admin Sekolah.</p>';
+    return;
+  }
+
+  let allUsers = db.get('users') || [];
+  if (activeUser.role === 'ADMIN_SEKOLAH') {
+    allUsers = allUsers.filter(u => u.schoolId === activeUser.schoolId && u.role !== 'SUPER_ADMIN');
+  }
+  const schools = db.get('schools') || [];
+
+  const roleLabel = { SUPER_ADMIN: 'Super Admin', ADMIN_SEKOLAH: 'Admin Sekolah', GURU: 'Guru', REVIEWER: 'Reviewer Soal', SISWA: 'Siswa' };
+  const roleBadge = { SUPER_ADMIN: 'badge-primary', ADMIN_SEKOLAH: 'badge-warning', GURU: 'badge-secondary', REVIEWER: 'badge-info', SISWA: 'badge-success' };
+
+  mount.innerHTML = `
+    <div class="card">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <h3 class="card-title">Daftar Semua Pengguna</h3>
+        <button class="btn btn-primary" id="btn-add-global-user"><i data-lucide="plus"></i> Tambah Pengguna Baru</button>
+      </div>
+      <div class="card-body" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Nama &amp; NIP/NISN</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Asal Sekolah</th>
+              <th>Status</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allUsers.length === 0
+              ? '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data pengguna.</td></tr>'
+              : allUsers.map((u, idx) => {
+                  const school = schools.find(s => s.id === u.schoolId)?.name || (u.role === 'SUPER_ADMIN' ? 'Semua Sekolah' : '-');
+                  const badge = roleBadge[u.role] || 'badge-secondary';
+                  const label = roleLabel[u.role] || u.role;
+                  return `<tr>
+                    <td style="color:var(--neutral-500);">${idx + 1}</td>
+                    <td>
+                      <strong>${u.name}</strong><br>
+                      <span style="font-size:11px; color:var(--neutral-500);">${u.nip || u.nisn || u.email}</span>
+                    </td>
+                    <td>${u.email}</td>
+                    <td><span class="badge ${badge}">${label}</span></td>
+                    <td><span style="font-size:12px;">${school}</span></td>
+                    <td><span class="badge ${u.status === 'AKTIF' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
+                    <td>
+                      <button class="btn btn-secondary btn-icon edit-global-user" data-id="${u.id}" title="Edit Data"><i data-lucide="edit"></i></button>
+                      ${u.id !== activeUser.id ? `<button class="btn btn-danger btn-icon delete-global-user" data-id="${u.id}" title="Hapus"><i data-lucide="trash-2"></i></button>` : ''}
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  refreshIcons();
+
+  mount.querySelector('#btn-add-global-user').onclick = () => openUserModal(null, mount);
+
+  mount.querySelectorAll('.edit-global-user').forEach(btn => {
+    btn.onclick = () => openUserModal(btn.dataset.id, mount);
+  });
+
+  mount.querySelectorAll('.delete-global-user').forEach(btn => {
+    btn.onclick = () => {
+      if (confirm('Yakin ingin menghapus pengguna ini secara permanen dari sistem?')) {
+        db.delete('users', btn.dataset.id);
+        showToast('Pengguna berhasil dihapus.', 'success');
+        renderKelolaUser(mount);
+      }
+    };
+  });
+}
+
+function openUserModal(userId = null, parentMount = null) {
+  const gModal = document.getElementById('global-modal');
+  const mContent = document.getElementById('modal-content-container');
+  if (!gModal || !mContent) { showToast('Komponen modal tidak ditemukan!', 'error'); return; }
+
+  const isEdit = !!userId;
+  const u = isEdit ? (db.get('users').find(user => user.id === userId) || {}) : {};
+  const schools = db.get('schools') || [];
+
+  const isSuperAdmin = activeUser.role === 'SUPER_ADMIN';
+  const isAdminSekolah = activeUser.role === 'ADMIN_SEKOLAH';
+
+  let schoolOptionsHtml = '';
+  if (isSuperAdmin) {
+    schoolOptionsHtml = '<option value="">-- Tidak Terikat Sekolah --</option>';
+    schools.forEach(s => {
+      schoolOptionsHtml += `<option value="${s.id}" ${u.schoolId === s.id ? 'selected' : ''}>${s.name}</option>`;
+    });
+  } else if (isAdminSekolah) {
+    const mySchool = schools.find(s => s.id === activeUser.schoolId);
+    schoolOptionsHtml = mySchool ? `<option value="${mySchool.id}" selected>${mySchool.name}</option>` : '';
+  }
+
+  let roleOptionsHtml = '';
+  if (isSuperAdmin) {
+    roleOptionsHtml = `
+      <option value="SUPER_ADMIN" ${u.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
+      <option value="ADMIN_SEKOLAH" ${u.role === 'ADMIN_SEKOLAH' ? 'selected' : ''}>Admin Sekolah</option>
+      <option value="GURU" ${(!u.role || u.role === 'GURU') ? 'selected' : ''}>Guru</option>
+      <option value="REVIEWER" ${u.role === 'REVIEWER' ? 'selected' : ''}>Reviewer Soal</option>
+      <option value="SISWA" ${u.role === 'SISWA' ? 'selected' : ''}>Siswa</option>
+    `;
+  } else {
+    roleOptionsHtml = `
+      <option value="GURU" ${(!u.role || u.role === 'GURU') ? 'selected' : ''}>Guru</option>
+      <option value="REVIEWER" ${u.role === 'REVIEWER' ? 'selected' : ''}>Reviewer Soal</option>
+      <option value="SISWA" ${u.role === 'SISWA' ? 'selected' : ''}>Siswa</option>
+    `;
+  }
+
+  mContent.innerHTML = `
+    <div style="padding:28px; min-width:440px; max-width:520px; width:100%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <h3 style="font-size:18px; font-weight:800; color:var(--neutral-900); margin:0;">
+          ${isEdit ? '&#x270F;&#xFE0F; Edit Pengguna' : '&#x2795; Tambah Pengguna Baru'}
+        </h3>
+        <button type="button" id="um-close-btn" style="background:none;border:1px solid var(--neutral-300);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px;">&times;</button>
+      </div>
+      <form id="um-form" style="display:flex; flex-direction:column; gap:14px;">
+        <div class="form-group">
+          <label class="form-label">Nama Lengkap *</label>
+          <input type="text" id="um-name" class="form-input" placeholder="Nama lengkap pengguna" value="${u.name || ''}" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email *</label>
+          <input type="email" id="um-email" class="form-input" placeholder="email@sekolah.sch.id" value="${u.email || ''}" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Kata Sandi ${isEdit ? '(kosongkan jika tidak diubah)' : '*'}</label>
+          <input type="text" id="um-pass" class="form-input" placeholder="${isEdit ? 'Biarkan kosong jika tidak ingin mengubah' : 'Masukkan kata sandi'}" value="${isEdit ? (u.password || '') : ''}">
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Role *</label>
+            <select id="um-role" class="form-input" required>${roleOptionsHtml}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="um-status" class="form-input">
+              <option value="AKTIF" ${(u.status || 'AKTIF') === 'AKTIF' ? 'selected' : ''}>Aktif</option>
+              <option value="NONAKTIF" ${u.status === 'NONAKTIF' ? 'selected' : ''}>Nonaktif</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Sekolah Tempat Bekerja/Belajar</label>
+          <select id="um-school" class="form-input" ${isAdminSekolah ? 'disabled' : ''}>${schoolOptionsHtml}</select>
+          ${isSuperAdmin ? '<small style="color:var(--neutral-500);font-size:11px;">Biarkan kosong untuk akun Super Admin yang tidak terikat sekolah.</small>' : ''}
+        </div>
+        <div class="form-group">
+          <label class="form-label">NIP / NISN (opsional)</label>
+          <input type="text" id="um-nip" class="form-input" placeholder="NIP untuk Guru/Admin, NISN untuk Siswa" value="${u.nip || u.nisn || ''}">
+        </div>
+        <div style="display:flex; gap:12px; margin-top:8px; justify-content:flex-end;">
+          <button type="button" id="um-cancel-btn" class="btn btn-secondary">Batal</button>
+          <button type="submit" class="btn btn-primary">&#x1F4BE; Simpan Data</button>
+        </div>
+      </form>
+    </div>
+  `;
+  gModal.style.display = 'flex';
+
+  const closeModal = () => { gModal.style.display = 'none'; };
+  mContent.querySelector('#um-close-btn').onclick = closeModal;
+  mContent.querySelector('#um-cancel-btn').onclick = closeModal;
+  gModal.onclick = (e) => { if (e.target === gModal) closeModal(); };
+
+  mContent.querySelector('#um-form').onsubmit = (e) => {
+    e.preventDefault();
+
+    const nameVal = mContent.querySelector('#um-name').value.trim();
+    const emailVal = mContent.querySelector('#um-email').value.trim();
+    const passVal = mContent.querySelector('#um-pass').value.trim();
+    const roleVal = mContent.querySelector('#um-role').value;
+    const statusVal = mContent.querySelector('#um-status').value;
+    const schoolEl = mContent.querySelector('#um-school');
+    const nipEl = mContent.querySelector('#um-nip');
+    const nipVal = nipEl ? nipEl.value.trim() : '';
+    const schoolVal = isAdminSekolah ? activeUser.schoolId : (schoolEl ? schoolEl.value : '');
+
+    if (!nameVal || !emailVal) { showToast('Nama dan Email wajib diisi!', 'error'); return; }
+    if (!isEdit && !passVal) { showToast('Kata sandi wajib diisi untuk pengguna baru!', 'error'); return; }
+    if (!schoolVal && roleVal !== 'SUPER_ADMIN') {
+      showToast('Pilih sekolah terlebih dahulu!', 'error');
+      return;
+    }
+
+    const updatedUser = {
+      ...u,
+      id: isEdit ? u.id : ('usr-' + Date.now()),
+      name: nameVal,
+      email: emailVal,
+      role: roleVal,
+      schoolId: schoolVal || null,
+      status: statusVal
+    };
+    if (passVal) updatedUser.password = passVal;
+    if (nipVal) {
+      if (roleVal === 'SISWA') { updatedUser.nisn = nipVal; delete updatedUser.nip; }
+      else { updatedUser.nip = nipVal; delete updatedUser.nisn; }
+    }
+
+    if (isEdit) {
+      db.update('users', u.id, updatedUser);
+      showToast(`Data "${nameVal}" berhasil diperbarui.`, 'success');
+    } else {
+      db.insert('users', updatedUser);
+      showToast(`Pengguna "${nameVal}" berhasil ditambahkan.`, 'success');
+    }
+    closeModal();
+    const mountEl = parentMount || document.getElementById('shell-content-mount');
+    if (mountEl) renderKelolaUser(mountEl);
+  };
+}

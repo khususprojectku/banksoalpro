@@ -253,3 +253,4 @@ export function downloadExcelTemplate() {
   // Download
   window.XLSX.writeFile(wb, 'template_impor_soal_banksoalpro.xlsx');
 }
+

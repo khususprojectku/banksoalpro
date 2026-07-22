@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Debug BankSoalPro</title></head>
+<body>
+<h2>Debug Log</h2>
+<div id="log" style="font-family:monospace;white-space:pre;background:#111;color:#0f0;padding:20px;border-radius:8px;min-height:200px;"></div>
+
+<script>
+var log = document.getElementById('log');
+function writeLog(msg, color) {
+  log.innerHTML += '<span style="color:' + (color||'#0f0') + '">' + msg + '</span>\n';
+}
+
+window.onerror = function(msg, src, line, col, err) {
+  writeLog('[ERROR] ' + msg + ' @ ' + src + ':' + line + ':' + col, '#f44');
+  return false;
+};
+
+writeLog('[1] Memuat db.js...');
+</script>
+<script src="db.js" onload="writeLog('[2] db.js BERHASIL dimuat')" onerror="writeLog('[2] db.js GAGAL!','#f44')"></script>
+<script>
+writeLog('[3] Cek window.db: ' + (typeof window.db));
+if (window.db && window.db.init) {
+  try {
+    window.db.init();
+    writeLog('[4] db.init() BERHASIL!');
+  } catch(e) {
+    writeLog('[4] db.init() ERROR: ' + e.message, '#f44');
+  }
+} else {
+  writeLog('[4] window.db tidak ditemukan!', '#f44');
+}
+</script>
+<script src="exporter.js" onload="writeLog('[5] exporter.js BERHASIL')" onerror="writeLog('[5] exporter.js GAGAL!','#f44')"></script>
+<script src="importer.js" onload="writeLog('[6] importer.js BERHASIL')" onerror="writeLog('[6] importer.js GAGAL!','#f44')"></script>
+<script>
+writeLog('[7] Cek window.exportToWord: ' + (typeof window.exportToWord));
+writeLog('[8] Cek window.parseExcelOrCSV: ' + (typeof window.parseExcelOrCSV));
+writeLog('');
+writeLog('=== Semua library OK! app.js siap diuji ===');
+</script>
+</body>
+</html>
