@@ -1,4 +1,4 @@
-// app.js - Main Application Logic & SPA Router for BankSoalPro
+﻿// app.js - Main Application Logic & SPA Router for BankSoalPro
 import { db } from './db.js';
 import { exportToWord, exportToExcel, exportToPDF } from './exporter.js';
 import { parseExcelOrCSV, downloadExcelTemplate } from './importer.js';
@@ -82,16 +82,16 @@ function parseQueryParams(hash) {
   return params;
 }
 
-// ─── Global Error Handler: Tampilkan error langsung di layar ───
+// â”€â”€â”€ Global Error Handler: Tampilkan error langsung di layar â”€â”€â”€
 window.onerror = function(msg, src, line, col, err) {
   var appEl = document.getElementById('app');
   if (appEl) {
     appEl.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
-      '<h2 style="color:#f87171;margin:0 0 16px">⛔ JavaScript Error</h2>' +
+      '<h2 style="color:#f87171;margin:0 0 16px">â›” JavaScript Error</h2>' +
       '<p style="color:#fbbf24;font-size:14px;margin:0 0 8px"><b>Pesan:</b> ' + msg + '</p>' +
       '<p style="color:#94a3b8;font-size:12px;margin:0 0 4px"><b>File:</b> ' + src + '</p>' +
       '<p style="color:#94a3b8;font-size:12px;margin:0 0 16px"><b>Baris:</b> ' + line + ', Kolom: ' + col + '</p>' +
-      '<p style="color:#64748b;font-size:11px">Buka DevTools (F12) → Console tab untuk detail lengkap.</p>' +
+      '<p style="color:#64748b;font-size:11px">Buka DevTools (F12) â†’ Console tab untuk detail lengkap.</p>' +
       '</div>';
   }
   return false;
@@ -107,7 +107,7 @@ try {
   var appEl2 = document.getElementById('app');
   if (appEl2) {
     appEl2.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
-      '<h2 style="color:#f87171;margin:0 0 16px">⛔ Error saat Routing</h2>' +
+      '<h2 style="color:#f87171;margin:0 0 16px">â›” Error saat Routing</h2>' +
       '<p style="color:#fbbf24;font-size:14px;margin:0 0 8px"><b>Pesan:</b> ' + e.message + '</p>' +
       '<pre style="color:#94a3b8;font-size:11px;overflow:auto;background:#0f172a;padding:12px;border-radius:8px">' + e.stack + '</pre>' +
       '</div>';
@@ -550,7 +550,7 @@ function renderLandingPage() {
               </div>
               <div class="form-group">
                 <label class="form-label" for="l-pass" style="color:#cbd5e1;">Kata Sandi</label>
-                <input type="password" id="l-pass" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="••••••••" required>
+                <input type="password" id="l-pass" class="form-input" style="background:rgba(30,41,59,0.8); border-color:rgba(255,255,255,0.15); color:white;" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" required>
               </div>
               <div class="form-group">
                 <label class="form-label" style="color:#cbd5e1; display:flex; justify-content:space-between;">
@@ -985,7 +985,7 @@ function renderLandingPage() {
           const tokenGroup = document.getElementById('token-group');
           tokenGroup.style.display = 'block';
           document.getElementById('s-exam-token').required = true;
-          document.getElementById('btn-student-flow').textContent = 'Verifikasi Token →';
+          document.getElementById('btn-student-flow').textContent = 'Verifikasi Token â†’';
           showToast(`Paket "${targetPkg.name}" ditemukan. Masukkan Token dari Guru.`, 'info');
         } else {
           // No token needed, jump straight to login step
@@ -2646,7 +2646,7 @@ function renderFormSoal(mount, questionId = null) {
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
               <div class="form-group">
                 <label class="form-label" for="q-code">Kode Soal (Unik)
-                  ${!isEdit ? '<button type="button" id="btn-auto-code" style="float:right;font-size:10px;color:var(--primary);background:none;border:none;cursor:pointer;text-decoration:underline;">🔄 Auto</button>' : ''}
+                  ${!isEdit ? '<button type="button" id="btn-auto-code" style="float:right;font-size:10px;color:var(--primary);background:none;border:none;cursor:pointer;text-decoration:underline;">ðŸ”„ Auto</button>' : ''}
                 </label>
                 <input type="text" id="q-code" class="form-input" placeholder="INF-X-001" value="${q.code || ''}" required style="font-family:monospace;letter-spacing:1px;">
               </div>
@@ -3617,11 +3617,11 @@ function openPackageDetailModal(pkgId) {
     </div>
   `;
 
-  globalModal.style.display = 'flex';
+  globalModal.classList.add('active');
   lucide.createIcons();
 
   modalContent.querySelectorAll('.btn-close-modal').forEach(btn => {
-    btn.onclick = () => { globalModal.style.display = 'none'; };
+    btn.onclick = () => { globalModal.classList.remove('active'); };
   });
 
   document.getElementById('btn-save-pkg-detail').onclick = () => {
@@ -3629,7 +3629,7 @@ function openPackageDetailModal(pkgId) {
     p.examToken = newToken;
     db.update('packages', p.id, p);
     showToast('Token ujian berhasil diperbarui.', 'success');
-    globalModal.style.display = 'none';
+    globalModal.classList.remove('active');
     handleRouting();
   };
 }
@@ -6779,9 +6779,9 @@ function openSiswaModal(userId = null, parentMount = null) {
       </form>
     </div>
   `;
-  gModal.style.display = 'flex';
+  gModal.classList.add('active');
 
-  const closeModal = () => { gModal.style.display = 'none'; };
+  const closeModal = () => { gModal.classList.remove('active'); };
   mContent.querySelector('#sm-close').onclick = closeModal;
   mContent.querySelector('#sm-cancel').onclick = closeModal;
   gModal.onclick = (e) => { if (e.target === gModal) closeModal(); };
@@ -6987,9 +6987,9 @@ function openUserModal(userId = null, parentMount = null) {
       </form>
     </div>
   `;
-  gModal.style.display = 'flex';
+  gModal.classList.add('active');
 
-  const closeModal = () => { gModal.style.display = 'none'; };
+  const closeModal = () => { gModal.classList.remove('active'); };
   mContent.querySelector('#um-close-btn').onclick = closeModal;
   mContent.querySelector('#um-cancel-btn').onclick = closeModal;
   gModal.onclick = (e) => { if (e.target === gModal) closeModal(); };
@@ -7041,3 +7041,4 @@ function openUserModal(userId = null, parentMount = null) {
     if (mountEl) renderKelolaUser(mountEl);
   };
 }
+
