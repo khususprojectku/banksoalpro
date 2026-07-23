@@ -517,12 +517,23 @@ function openDeviceImagePicker(textarea, selection) {
         showToast('Ukuran gambar maksimal 5 MB.', 'error');
         return;
       }
-      const dataUrl = await fileToDataUrl(file);
+      
+      showToast('Mengunggah gambar...', 'info');
+      const formData = new FormData();
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-      const imageHtml = `<img src="${dataUrl}" data-local-image-name="${safeName}" alt="Gambar Soal" style="max-width:100%; height:auto; margin:10px 0; border-radius:8px;" />`;
+      formData.append('image', file, safeName);
+      
+      const uploadResponse = await fetch('/api/gambarsoal', { method: 'POST', body: formData });
+      const result = await uploadResponse.json().catch(() => ({}));
+      
+      if (!uploadResponse.ok || !result.url) {
+        throw new Error(result.message || 'Gambar gagal disimpan ke folder gambarsoal.');
+      }
+      
+      const imageHtml = `<img src="${result.url}" alt="Gambar Soal" style="max-width:100%; height:auto; margin:10px 0; border-radius:8px;" />`;
       insertHtmlAtCursor(textarea, imageHtml, selection);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      showToast('Gambar siap disimpan bersama soal.', 'success');
+      showToast('Gambar berhasil diunggah.', 'success');
   } catch (error) {
     console.error(error);
       showToast(error.message || 'Gambar gagal disisipkan.', 'error');
