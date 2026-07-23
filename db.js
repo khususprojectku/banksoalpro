@@ -14,7 +14,8 @@ const DEFAULT_SEED_DATA = {
       address: 'Jl. Pondok Indah no.11 Kisaran',
       email: 'info@sman4kisaran.sch.id',
       phone: '0623-41157',
-      academicYear: '2025/2026'
+      academicYear: '2025/2026',
+      status: 'AKTIF'
     },
     {
       id: 'sch-2',
@@ -24,7 +25,8 @@ const DEFAULT_SEED_DATA = {
       address: 'Jl. Cik Ditiro No.1 Medan',
       email: 'admin@sman1medan.sch.id',
       phone: '061-451239',
-      academicYear: '2025/2026'
+      academicYear: '2025/2026',
+      status: 'NONAKTIF'
     },
     {
       id: 'sch-3',
@@ -34,7 +36,8 @@ const DEFAULT_SEED_DATA = {
       address: 'Jl. Sei Gambas Kisaran',
       email: 'smkn2asahan@yahoo.co.id',
       phone: '0623-42991',
-      academicYear: '2025/2026'
+      academicYear: '2025/2026',
+      status: 'NONAKTIF'
     }
   ],
   users: [
@@ -140,6 +143,14 @@ const DEFAULT_SEED_DATA = {
     { id: 'tp-12', name: 'Perkalian Matriks', chapterId: 'ch-8' },
     { id: 'tp-13', name: 'Peluang Kejadian Saling Bebas', chapterId: 'ch-9' },
     { id: 'tp-14', name: 'Deret Aritmatika & Geometri', chapterId: 'ch-10' }
+  ],
+  exam_types: [
+    { id: 'ex-1', code: 'UTS', name: 'UTS', description: 'Ulangan Tengah Semester', status: 'AKTIF' },
+    { id: 'ex-2', code: 'UAS', name: 'UAS', description: 'Ulangan Akhir Semester', status: 'AKTIF' },
+    { id: 'ex-3', code: 'PAS', name: 'PAS', description: 'Penilaian Akhir Semester', status: 'AKTIF' },
+    { id: 'ex-4', code: 'PAT', name: 'PAT', description: 'Penilaian Akhir Tahun', status: 'AKTIF' },
+    { id: 'ex-5', code: 'TRY_OUT', name: 'Try Out', description: 'Ujian simulasi / try out', status: 'AKTIF' },
+    { id: 'ex-6', code: 'LATIHAN', name: 'Latihan Mandiri', description: 'Ujian latihan mandiri siswa', status: 'AKTIF' }
   ],
   questions: [
     {
@@ -1803,6 +1814,7 @@ const DEFAULT_SEED_DATA = {
       requireReviewer: false,
       canManageSchools: true,
       canManagePrivileges: true,
+      menuJenisUjian: true,
       canStudentScanQR: true
     },
     ADMIN_SEKOLAH: {
@@ -1813,6 +1825,7 @@ const DEFAULT_SEED_DATA = {
       requireReviewer: true,
       canManageSchools: false,
       canManagePrivileges: false,
+      menuJenisUjian: false,
       canStudentScanQR: true
     },
     GURU: {
@@ -1823,6 +1836,7 @@ const DEFAULT_SEED_DATA = {
       requireReviewer: true,
       canManageSchools: false,
       canManagePrivileges: false,
+      menuJenisUjian: false,
       canStudentScanQR: true
     },
     REVIEWER: {
@@ -1833,6 +1847,7 @@ const DEFAULT_SEED_DATA = {
       requireReviewer: true,
       canManageSchools: false,
       canManagePrivileges: false,
+      menuJenisUjian: false,
       canStudentScanQR: false
     },
     SISWA: {
@@ -1843,6 +1858,7 @@ const DEFAULT_SEED_DATA = {
       requireReviewer: false,
       canManageSchools: false,
       canManagePrivileges: false,
+      menuJenisUjian: false,
       canStudentScanQR: true
     }
   },
@@ -1935,6 +1951,51 @@ export const db = {
     if (!localStorage.getItem(DB_KEY)) {
       this.saveAll(DEFAULT_SEED_DATA);
       console.log('BankSoalPro Virtual DB successfully initialized with seed data.');
+      return;
+    }
+    // Migrate existing browser data and keep each school's access indicator in sync
+    // with its active school administrator.
+    try {
+      const data = JSON.parse(localStorage.getItem(DB_KEY));
+      if (data?.schools && data?.users) {
+        let changed = false;
+        if (!data.exam_types) {
+          data.exam_types = JSON.parse(JSON.stringify(DEFAULT_SEED_DATA.exam_types));
+          changed = true;
+        }
+        // Add newly introduced privilege defaults to saved browser data. This
+        // keeps the exam-type CRUD menu closed for every non-super-admin role
+        // until the Super Admin explicitly grants access in the matrix.
+        if (!data.privileges) {
+          data.privileges = JSON.parse(JSON.stringify(DEFAULT_SEED_DATA.privileges));
+          changed = true;
+        } else {
+          Object.entries(DEFAULT_SEED_DATA.privileges).forEach(([role, defaults]) => {
+            if (!data.privileges[role]) {
+              data.privileges[role] = JSON.parse(JSON.stringify(defaults));
+              changed = true;
+              return;
+            }
+            Object.entries(defaults).forEach(([key, value]) => {
+              if (data.privileges[role][key] === undefined) {
+                data.privileges[role][key] = value;
+                changed = true;
+              }
+            });
+          });
+        }
+        data.schools.forEach(school => {
+          const shouldBeActive = data.users.some(user => user.schoolId === school.id && user.role === 'ADMIN_SEKOLAH' && user.status === 'AKTIF');
+          const nextStatus = shouldBeActive ? 'AKTIF' : 'NONAKTIF';
+          if (school.status !== nextStatus) {
+            school.status = nextStatus;
+            changed = true;
+          }
+        });
+        if (changed) this.saveAll(data);
+      }
+    } catch (e) {
+      console.error('Unable to migrate school access state.', e);
     }
   },
 
@@ -2007,6 +2068,27 @@ export const db = {
       return records[index];
     }
     return null;
+  },
+
+  // A school is operational only when it is enabled and has an enabled school admin.
+  // This keeps the tenant access state independent from individual teacher/student accounts.
+  isSchoolOperational(schoolId) {
+    if (!schoolId) return true;
+    const school = this.get('schools').find(s => s.id === schoolId);
+    if (!school || school.status === 'NONAKTIF') return false;
+    return this.get('users').some(u => u.schoolId === schoolId && u.role === 'ADMIN_SEKOLAH' && u.status === 'AKTIF');
+  },
+
+  canUserLogin(user) {
+    if (!user || user.status !== 'AKTIF') return false;
+    return user.role === 'SUPER_ADMIN' || this.isSchoolOperational(user.schoolId);
+  },
+
+  // Recalculate the school switch from its school-admin accounts after every admin change.
+  syncSchoolAccess(schoolId) {
+    if (!schoolId) return null;
+    const hasActiveAdmin = this.get('users').some(u => u.schoolId === schoolId && u.role === 'ADMIN_SEKOLAH' && u.status === 'AKTIF');
+    return this.update('schools', schoolId, { status: hasActiveAdmin ? 'AKTIF' : 'NONAKTIF' });
   },
 
   // Delete a record from a table by ID

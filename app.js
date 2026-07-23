@@ -1,4 +1,4 @@
-﻿// app.js - Main Application Logic & SPA Router for BankSoalPro
+// app.js - Main Application Logic & SPA Router for BankSoalPro
 import { db } from './db.js';
 import { exportToWord, exportToExcel, exportToPDF } from './exporter.js';
 import { parseExcelOrCSV, downloadExcelTemplate } from './importer.js';
@@ -23,6 +23,20 @@ const toastContainer = document.getElementById('toast-container');
 // Core Router
 function handleRouting() {
   activeUser = JSON.parse(sessionStorage.getItem('active_user') || 'null');
+
+  // A session may still exist when its account/admin school has just been disabled.
+  if (activeUser) {
+    const currentUser = db.get('users').find(u => u.id === activeUser.id);
+    if (!db.canUserLogin(currentUser)) {
+      sessionStorage.removeItem('active_user');
+      sessionStorage.removeItem('active_school_id');
+      activeUser = null;
+      showToast('Akses sekolah atau akun Anda telah dinonaktifkan. Hubungi owner aplikasi.', 'error');
+    } else {
+      activeUser = currentUser;
+      sessionStorage.setItem('active_user', JSON.stringify(currentUser));
+    }
+  }
 
   // Parse Hash
   const hash = window.location.hash || '#home';
@@ -83,7 +97,7 @@ function parseQueryParams(hash) {
 }
 
 // â”€â”€â”€ Global Error Handler: Tampilkan error langsung di layar â”€â”€â”€
-window.onerror = function(msg, src, line, col, err) {
+window.onerror = function (msg, src, line, col, err) {
   var appEl = document.getElementById('app');
   if (appEl) {
     appEl.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
@@ -99,11 +113,15 @@ window.onerror = function(msg, src, line, col, err) {
 
 // Router Event Listeners
 window.addEventListener('hashchange', handleRouting);
+// Propagate an owner change (including a disabled school admin) to sessions open in other tabs.
+window.addEventListener('storage', (event) => {
+  if (event.key === 'banksoalpro_db') handleRouting();
+});
 
 // Jalankan routing: DOM sudah siap karena script ada di bawah <body>
 try {
   handleRouting();
-} catch(e) {
+} catch (e) {
   var appEl2 = document.getElementById('app');
   if (appEl2) {
     appEl2.innerHTML = '<div style="padding:40px;background:#1e293b;min-height:100vh;font-family:monospace;">' +
@@ -197,14 +215,14 @@ function setupVisualEditor(textareaId, previewId) {
     const toolbar = container.querySelector('.editor-toolbar');
     if (toolbar && !toolbar.querySelector('#btn-eq-editor-toggle')) {
       const latexDisplayBtn = toolbar.querySelector('[data-editor-cmd="latex-display"]');
-      
+
       const toggleBtn = document.createElement('button');
       toggleBtn.type = 'button';
       toggleBtn.className = 'toolbar-btn';
       toggleBtn.id = 'btn-eq-editor-toggle';
       toggleBtn.title = 'Equation Editor (Word Style)';
       toggleBtn.innerHTML = '<i data-lucide="square-pi" style="width:14px; height:14px;"></i>';
-      
+
       if (latexDisplayBtn) {
         latexDisplayBtn.after(toggleBtn);
         const divider = document.createElement('span');
@@ -327,7 +345,7 @@ function setupVisualEditor(textareaId, previewId) {
           e.preventDefault();
           tabBtns.forEach(b => b.classList.remove('active'));
           tabPanes.forEach(p => p.classList.remove('active'));
-          
+
           btn.classList.add('active');
           const paneId = btn.dataset.eqTab;
           eqPanel.querySelector(`#${paneId}`).classList.add('active');
@@ -340,7 +358,7 @@ function setupVisualEditor(textareaId, previewId) {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           const latex = btn.dataset.latex;
-          
+
           const start = editor.selectionStart;
           const end = editor.selectionEnd;
           const text = editor.value;
@@ -432,20 +450,121 @@ function insertTextAtCursor(textarea, cmd) {
   </tbody>
 </table>\n`;
       break;
-    case 'image':
+    case 'image': {
       const url = prompt('Masukkan URL Gambar:', 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=400');
-      if (url) {
-        replacement = `<img src="${url}" alt="Gambar Soal" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;" />`;
-      }
+      replacement = buildQuestionImageMarkup(url);
       break;
+    }
+    case 'device-image': {
+      openDeviceImagePicker(textarea, { start, end });
+      return;
+    }
     default:
       return;
   }
 
+  if (!replacement) return;
+  insertHtmlAtCursor(textarea, replacement, { start, end });
+}
+
+function insertHtmlAtCursor(textarea, replacement, selection = {}) {
+  const start = selection.start ?? textarea.selectionStart;
+  const end = selection.end ?? textarea.selectionEnd;
+  const text = textarea.value;
   textarea.value = text.substring(0, start) + replacement + text.substring(end);
   textarea.focus();
   textarea.selectionStart = start + replacement.length;
   textarea.selectionEnd = start + replacement.length;
+}
+
+function buildQuestionImageMarkup(url) {
+  if (!url) return '';
+  try {
+    if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(url)) {
+      return `<img src="${url}" alt="Gambar Soal" style="max-width:100%; height:auto; margin:10px 0; border-radius:8px;" />`;
+    }
+    const safeUrl = new URL(url.trim());
+    if (!['https:', 'http:'].includes(safeUrl.protocol)) throw new Error('Invalid protocol');
+    return `<img src="${safeUrl.href}" alt="Gambar Soal" style="max-width:100%; height:auto; margin:10px 0; border-radius:8px;" />`;
+  } catch {
+    showToast('Tautan gambar tidak valid. Gunakan URL http/https.', 'error');
+    return '';
+  }
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Berkas gambar tidak dapat dibaca.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function openDeviceImagePicker(textarea, selection) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Pilih file gambar berformat PNG, JPG, GIF, WebP, atau SVG.', 'error');
+      return;
+    }
+    try {
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('Ukuran gambar maksimal 5 MB.', 'error');
+        return;
+      }
+      const dataUrl = await fileToDataUrl(file);
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+      const imageHtml = `<img src="${dataUrl}" data-local-image-name="${safeName}" alt="Gambar Soal" style="max-width:100%; height:auto; margin:10px 0; border-radius:8px;" />`;
+      insertHtmlAtCursor(textarea, imageHtml, selection);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      showToast('Gambar siap disimpan bersama soal.', 'success');
+  } catch (error) {
+    console.error(error);
+      showToast(error.message || 'Gambar gagal disisipkan.', 'error');
+    }
+  }, { once: true });
+  input.click();
+}
+
+async function uploadEmbeddedQuestionImages(questionHtml) {
+  const container = document.createElement('div');
+  container.innerHTML = questionHtml;
+  const images = Array.from(container.querySelectorAll('img[src^="data:image/"]'));
+
+  for (const image of images) {
+    const source = image.getAttribute('src');
+    const response = await fetch(source);
+    const blob = await response.blob();
+    const formData = new FormData();
+    formData.append('image', blob, image.dataset.localImageName || 'gambar-soal');
+    const uploadResponse = await fetch('/api/gambarsoal', { method: 'POST', body: formData });
+    const result = await uploadResponse.json().catch(() => ({}));
+    if (!uploadResponse.ok || !result.url) {
+      throw new Error(result.message || 'Gambar gagal disimpan ke folder gambarsoal.');
+    }
+    image.setAttribute('src', result.url);
+    image.removeAttribute('data-local-image-name');
+  }
+  return container.innerHTML;
+}
+
+function getActiveExamTypes() {
+  return (db.get('exam_types') || []).filter(t => t.status !== 'NONAKTIF');
+}
+
+function getExamTypeMeta(code) {
+  return (db.get('exam_types') || []).find(t => t.code === code) || null;
+}
+
+function getExamTypeLabel(code) {
+  const type = getExamTypeMeta(code);
+  if (!type) return code || '-';
+  return `${type.code} - ${type.name}`;
 }
 
 // ----------------------------------------------------
@@ -458,26 +577,33 @@ function renderLandingPage() {
   appMount.innerHTML = `
     <div class="landing-page">
       <!-- Navbar -->
-      <nav class="landing-nav">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div class="logo-icon">BSP</div>
-          <div style="font-weight:900; font-size:20px; color:white; letter-spacing:-0.5px;">BankSoalPro</div>
-        </div>
+      <nav class="landing-nav" id="landing-nav">
+        <div class="landing-nav-inner">
+          <a href="#home" class="landing-brand" aria-label="BankSoalPro">
+            <div class="logo-icon">BSP</div>
+            <span class="landing-logo-text">BankSoalPro</span>
+          </a>
 
-        <div class="landing-nav-links">
-          <a href="#features" class="landing-nav-link">Fitur Unggulan</a>
-          <a href="#pricing" class="landing-nav-link">Harga & Paket</a>
-          <a href="#testimonials" class="landing-nav-link">Testimoni</a>
-          <a href="#faq" class="landing-nav-link">FAQ</a>
-          ${activeUser ? `
-            <a href="#dashboard" class="btn btn-primary" style="padding:8px 20px;">
-              <i data-lucide="layout-dashboard"></i> Buka Dashboard
-            </a>
-          ` : `
-            <a href="#login-card-hero" class="btn btn-primary" style="padding:8px 20px;">
-              <i data-lucide="log-in"></i> Masuk Sekarang
-            </a>
-          `}
+          <div class="landing-nav-links" id="landing-nav-links">
+            <a href="#features" class="landing-nav-link">Fitur Unggulan</a>
+            <a href="#pricing" class="landing-nav-link">Harga & Paket</a>
+            <a href="#testimonials" class="landing-nav-link">Testimoni</a>
+            <a href="#faq" class="landing-nav-link">FAQ</a>
+          </div>
+
+          <div class="landing-nav-actions">
+            ${activeUser ? `
+              <a href="#dashboard" class="landing-nav-cta">
+                <i data-lucide="layout-dashboard"></i>
+                <span>Dashboard</span>
+              </a>
+            ` : `
+              <a href="#login-card-hero" class="landing-nav-cta">
+                <i data-lucide="log-in"></i>
+                <span>Masuk Sekarang</span>
+              </a>
+            `}
+          </div>
         </div>
       </nav>
 
@@ -524,11 +650,10 @@ function renderLandingPage() {
           </div>
         </div>
 
-        <!-- Login & Student Exam Entry -->
+        <!-- Login Entry -->
         <div class="landing-login-card" id="login-card-hero" style="padding:0; overflow:hidden;">
           <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(15,23,42,0.8);">
             <button id="tab-login" class="tab-btn active" style="flex:1; padding:16px; background:transparent; border:none; color:white; font-weight:700; cursor:pointer; border-bottom:2px solid var(--primary);">Login Sistem</button>
-            <button id="tab-exam" class="tab-btn" style="flex:1; padding:16px; background:transparent; border:none; color:#cbd5e1; font-weight:700; cursor:pointer; border-bottom:2px solid transparent;">Ujian Siswa</button>
           </div>
 
           <!-- PANE: LOGIN SYSTEM -->
@@ -580,7 +705,7 @@ function renderLandingPage() {
             </div>
           </div>
 
-          <!-- PANE: STUDENT EXAM CBT -->
+        <!-- PANE: STUDENT EXAM CBT (disembunyikan dari halaman awal) -->
           <div id="pane-exam" style="padding:24px; display:none;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
               <div>
@@ -923,13 +1048,79 @@ function renderLandingPage() {
       const email = btn.dataset.email;
       const user = db.get('users').find(u => u.email === email);
       if (user) {
-        document.getElementById('l-email').value = user.email;
-        document.getElementById('l-pass').value = user.password;
-        document.getElementById('l-captcha-input').value = currentCaptchaCode;
-        showToast(`Mengisi kredensial & CAPTCHA untuk ${user.name}...`, 'info');
+        // Quick login is a demo shortcut: it must authenticate immediately, not merely fill the form.
+        attemptLogin(user.email, user.password);
       }
     });
   });
+
+  const landingNav = document.getElementById('landing-nav');
+  const landingNavLinks = document.getElementById('landing-nav-links');
+  const landingNavToggle = document.getElementById('landing-nav-toggle');
+
+  if (landingNav) {
+    const syncLandingNavScroll = () => {
+      landingNav.classList.toggle('scrolled', window.scrollY > 24);
+    };
+    syncLandingNavScroll();
+    window.addEventListener('scroll', syncLandingNavScroll, { passive: true });
+  }
+
+  const closeLandingNav = () => {
+    if (!landingNavLinks || !landingNavToggle) return;
+    landingNavLinks.classList.remove('open');
+    landingNavToggle.classList.remove('open');
+    landingNavToggle.setAttribute('aria-expanded', 'false');
+    const icon = landingNavToggle.querySelector('[data-lucide]');
+    if (icon) icon.setAttribute('data-lucide', 'menu');
+    lucide.createIcons();
+  };
+
+  if (landingNavToggle && landingNavLinks) {
+    landingNavToggle.addEventListener('click', () => {
+      const isOpen = landingNavLinks.classList.toggle('open');
+      landingNavToggle.classList.toggle('open', isOpen);
+      landingNavToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      const icon = landingNavToggle.querySelector('[data-lucide]');
+      if (icon) icon.setAttribute('data-lucide', isOpen ? 'x' : 'menu');
+      lucide.createIcons();
+    });
+
+    landingNavLinks.querySelectorAll('.landing-nav-link').forEach(link => {
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        const target = document.querySelector(link.getAttribute('href'));
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        closeLandingNav();
+      });
+    });
+
+    document.querySelectorAll('.landing-nav-actions a[href^="#"], .landing-brand[href^="#"]').forEach(link => {
+      link.addEventListener('click', (event) => {
+        const href = link.getAttribute('href');
+        if (href === '#home') {
+          event.preventDefault();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          closeLandingNav();
+          return;
+        }
+        const target = document.querySelector(href);
+        if (target) {
+          event.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          closeLandingNav();
+        }
+      });
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.landing-nav')) closeLandingNav();
+    });
+
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 900) closeLandingNav();
+    });
+  }
 
   // Handle Login Tabs
   const tabLogin = document.getElementById('tab-login');
@@ -1126,12 +1317,18 @@ function attemptLogin(email, password, targetRedirect = '#dashboard') {
   const user = db.get('users').find(u => u.email === email && u.password === password);
 
   if (user) {
-    if (user.status !== 'AKTIF') {
-      showToast('Akun Anda dinonaktifkan. Hubungi admin.', 'error');
+    if (!db.canUserLogin(user)) {
+      const schoolBlocked = user.role !== 'SUPER_ADMIN' && !db.isSchoolOperational(user.schoolId);
+      showToast(schoolBlocked ? 'Akses sekolah sedang dinonaktifkan oleh owner atau admin sekolah tidak aktif.' : 'Akun Anda dinonaktifkan. Hubungi admin.', 'error');
       return;
     }
 
     sessionStorage.setItem('active_user', JSON.stringify(user));
+    // A regular account must never inherit the school context left by a
+    // previous Super Admin session in the same browser tab.
+    if (user.role !== 'SUPER_ADMIN') {
+      sessionStorage.setItem('active_school_id', user.schoolId || '');
+    }
     db.log(user.id, user.name, 'LOGIN', 'Berhasil login ke dalam sistem.');
     showToast(`Selamat datang kembali, ${user.name}!`, 'success');
     window.location.hash = targetRedirect;
@@ -1144,32 +1341,41 @@ function attemptLogin(email, password, targetRedirect = '#dashboard') {
 // 2. RENDER APP SHELL (Sidebar & Header Layout)
 // ----------------------------------------------------
 function renderAppShell(activePage, queryParams) {
-  const activeSchoolId = sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1';
   const allSchools = db.get('schools');
+  const activeSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || allSchools[0]?.id || 'sch-1')
+    : activeUser.schoolId;
   const currentSchool = allSchools.find(s => s.id === activeSchoolId) || allSchools[0] || { name: 'BankSoalPro', academicYear: '-' };
 
   const menuConfig = [
     { page: '#dashboard', label: 'Dashboard', icon: 'layout-dashboard', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
-    { page: '#sekolah', label: 'Kelola Sekolah', icon: 'building-2', roles: ['SUPER_ADMIN'] },
-    { page: '#profil-sekolah', label: 'Profil Sekolah', icon: 'school', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
-    { page: '#guru', label: 'Manajemen Guru', icon: 'users', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
-    { page: '#kelola-user', label: 'Kelola Pengguna', icon: 'user-cog', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
-    { page: '#kelola-siswa', label: 'Kelola Siswa', icon: 'graduation-cap', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
-    { page: '#privileges', label: 'Hak Akses & Privilege', icon: 'key-round', roles: ['SUPER_ADMIN'] },
-    { page: '#struktur', label: 'Struktur Kurikulum', icon: 'git-branch', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
-    { page: '#soal', label: 'Bank Soal', icon: 'file-text', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
-    { page: '#impor', label: 'Import Soal', icon: 'file-up', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU'] },
-    { page: '#paket', label: 'Paket Soal', icon: 'package', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
-    { page: '#android-exam', label: 'App Ujian Android', icon: 'smartphone', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
-    { page: '#rekap-ujian', label: 'Hasil & Rekap Ujian', icon: 'award', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
-    { page: '#logs', label: 'Audit Log & Keamanan', icon: 'shield-alert', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
-    { page: '#profil-saya', label: 'Profil Saya', icon: 'circle-user-round', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
+    { page: '#sekolah', label: 'Kelola Sekolah', icon: 'building-2', privilegeKey: 'menuKelolaSekolah', roles: ['SUPER_ADMIN'] },
+    { page: '#profil-sekolah', label: 'Profil Sekolah', icon: 'school', privilegeKey: 'menuProfilSekolah', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#guru', label: 'Manajemen Guru', icon: 'users', privilegeKey: 'menuManajemenGuru', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#kelola-user', label: 'Kelola Pengguna', icon: 'user-cog', privilegeKey: 'menuKelolaPengguna', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#kelola-siswa', label: 'Kelola Siswa', icon: 'graduation-cap', privilegeKey: 'menuKelolaSiswa', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#privileges', label: 'Hak Akses & Privilege', icon: 'key-round', privilegeKey: 'menuHakAkses', roles: ['SUPER_ADMIN'] },
+    { page: '#jenis-ujian', label: 'Jenis Ujian', icon: 'book-check', privilegeKey: 'menuJenisUjian', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#struktur', label: 'Struktur Kurikulum', icon: 'git-branch', privilegeKey: 'menuStrukturKurikulum', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#soal', label: 'Bank Soal', icon: 'file-text', privilegeKey: 'menuBankSoal', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#impor', label: 'Import Soal', icon: 'file-up', privilegeKey: 'menuImportSoal', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU'] },
+    { page: '#paket', label: 'Paket Soal', icon: 'package', privilegeKey: 'menuPaketSoal', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER'] },
+    { page: '#android-exam', label: 'App Ujian Android', icon: 'smartphone', privilegeKey: 'menuAppUjianAndroid', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
+    { page: '#rekap-ujian', label: 'Hasil & Rekap Ujian', icon: 'award', privilegeKey: 'menuHasilRekap', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'SISWA'] },
+    { page: '#logs', label: 'Audit Log & Keamanan', icon: 'shield-alert', privilegeKey: 'menuAuditLog', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH'] },
+    { page: '#profil-saya', label: 'Profil Saya', icon: 'circle-user-round', privilegeKey: 'menuProfilSaya', roles: ['SUPER_ADMIN', 'ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'] },
   ];
 
+  // Hide-and-deny: a disabled menu may not be opened simply by typing its hash URL.
+  const requestedMenu = menuConfig.find(item => item.page === activePage);
+  if (requestedMenu && (!requestedMenu.roles.includes(activeUser.role) || (requestedMenu.privilegeKey && !db.can(activeUser.role, requestedMenu.privilegeKey)))) {
+    showToast('Menu ini dinonaktifkan untuk peran akun Anda.', 'error');
+    activePage = '#dashboard';
+  }
 
   let sidebarMenuHtml = '';
   menuConfig.forEach(item => {
-    if (item.roles.includes(activeUser.role)) {
+    if (item.roles.includes(activeUser.role) && (!item.privilegeKey || db.can(activeUser.role, item.privilegeKey))) {
       const isActive = activePage === item.page ? 'active' : '';
       sidebarMenuHtml += `
         <a class="menu-item ${isActive}" href="${item.page}">
@@ -1360,6 +1566,11 @@ function renderAppShell(activePage, queryParams) {
       titleDisplay.innerText = 'Hak Akses & Privilege Peran';
       subtitleDisplay.innerText = 'Super Admin: Atur privilege fitur untuk setiap jenis akun';
       renderPrivileges(contentMount);
+      break;
+    case '#jenis-ujian':
+      titleDisplay.innerText = 'CRUD Jenis Ujian';
+      subtitleDisplay.innerText = 'Kelola referensi jenis ujian yang dipakai di paket soal';
+      renderJenisUjian(contentMount);
       break;
     case '#struktur':
       titleDisplay.innerText = 'Struktur Kurikulum';
@@ -1653,7 +1864,10 @@ function renderDashboard(mount) {
 // 4. PAGE: PROFIL SEKOLAH
 // ----------------------------------------------------
 function renderProfilSekolah(mount) {
-  const school = db.get('schools')[0] || {};
+  const selectedSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || db.get('schools')[0]?.id)
+    : activeUser.schoolId;
+  const school = db.get('schools').find(s => s.id === selectedSchoolId) || {};
 
   mount.innerHTML = `
     <div class="card" style="max-width:700px;">
@@ -1732,65 +1946,71 @@ function renderProfilSekolah(mount) {
 // 5. PAGE: MANAJEMEN GURU
 // ----------------------------------------------------
 function renderGuru(mount) {
-  const teachers = db.get('users').filter(u => u.role === 'GURU');
-  const subjects = db.get('subjects');
+  const contextSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1')
+    : activeUser.schoolId;
+  const teachers = db.get('users').filter(u => u.role === 'GURU' && (!contextSchoolId || u.schoolId === contextSchoolId));
+  const subjects = db.get('subjects').filter(s => !contextSchoolId || s.schoolId === contextSchoolId);
+  const subjectNameMap = subjects.reduce((acc, s) => {
+    acc[s.id] = s.name;
+    return acc;
+  }, {});
 
   mount.innerHTML = `
-    <div class="action-row">
-      <div></div>
-      <button class="btn btn-primary" id="btn-tambah-guru">
-        <i data-lucide="plus"></i>
-        <span>Tambah Guru</span>
-      </button>
-    </div>
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="card">
+        <div class="card-body" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+          <div style="flex:1; min-width:220px;">
+            <label class="form-label" style="margin-bottom:6px;">Cari Guru</label>
+            <input type="search" id="guru-search" class="form-input" placeholder="Nama, email, atau NIP...">
+          </div>
+          <div style="width:160px;">
+            <label class="form-label" style="margin-bottom:6px;">Status</label>
+            <select id="guru-status-filter" class="form-input">
+              <option value="">Semua Status</option>
+              <option value="AKTIF">Aktif</option>
+              <option value="NONAKTIF">Nonaktif</option>
+            </select>
+          </div>
+          <div style="width:220px;">
+            <label class="form-label" style="margin-bottom:6px;">Mata Pelajaran</label>
+            <select id="guru-subject-filter" class="form-input">
+              <option value="">Semua Mapel</option>
+              ${subjects.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn btn-primary" id="btn-tambah-guru" style="margin-left:auto;">
+            <i data-lucide="plus"></i>
+            <span>Tambah Guru</span>
+          </button>
+        </div>
+      </div>
 
-    <div class="card">
-      <div class="card-body" style="padding:0;">
-        <div class="table-wrapper">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Nama Lengkap</th>
-                <th>NIP</th>
-                <th>Email</th>
-                <th>Mengajar Mapel</th>
-                <th>Status</th>
-                <th style="text-align:right;">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${teachers.map(t => {
-    const subNames = (t.subjectIds || []).map(sid => {
-      const s = subjects.find(sub => sub.id === sid);
-      return s ? s.name : '';
-    }).filter(Boolean).join(', ') || 'Belum diatur';
+      ${subjects.length === 0 ? `
+        <div class="card" style="border-left:4px solid var(--warning);">
+          <div class="card-body" style="font-size:13px; color:var(--neutral-700);">
+            Sekolah ini belum memiliki mata pelajaran. Tambahkan dulu di menu Struktur Kurikulum agar guru bisa dihubungkan ke mapel yang sesuai.
+          </div>
+        </div>
+      ` : ''}
 
-    const statusClass = t.status === 'AKTIF' ? 'success' : 'danger';
-
-    return `
-                  <tr>
-                    <td>
-                      <div style="font-weight:700; color: var(--neutral-900);">${t.name}</div>
-                    </td>
-                    <td><code>${t.nip || '-'}</code></td>
-                    <td>${t.email}</td>
-                    <td>${subNames}</td>
-                    <td><span class="badge badge-${statusClass}">${t.status}</span></td>
-                    <td style="text-align:right;">
-                      <div style="display:inline-flex; gap:8px;">
-                        <button class="btn btn-secondary btn-icon btn-edit-guru" data-id="${t.id}" title="Edit">
-                          <i data-lucide="edit" style="width:16px; height:16px;"></i>
-                        </button>
-                        <button class="btn btn-danger btn-icon btn-delete-guru" data-id="${t.id}" title="Hapus">
-                          <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                `;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada data guru.</td></tr>'}
-            </tbody>
-          </table>
+      <div class="card">
+        <div class="card-body" style="padding:0;">
+          <div class="table-wrapper">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nama Lengkap</th>
+                  <th>NIP</th>
+                  <th>Email</th>
+                  <th>Mengajar Mapel</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="guru-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -1798,32 +2018,93 @@ function renderGuru(mount) {
 
   lucide.createIcons();
 
-  // Add click listeners
-  document.getElementById('btn-tambah-guru').addEventListener('click', () => openGuruModal());
+  const searchInput = document.getElementById('guru-search');
+  const statusFilter = document.getElementById('guru-status-filter');
+  const subjectFilter = document.getElementById('guru-subject-filter');
+  const tbody = document.getElementById('guru-tbody');
 
-  const editBtns = mount.querySelectorAll('.btn-edit-guru');
-  editBtns.forEach(btn => {
-    btn.addEventListener('click', () => openGuruModal(btn.dataset.id));
-  });
+  const renderTable = () => {
+    const query = searchInput.value.trim().toLowerCase();
+    const statusVal = statusFilter.value;
+    const subjectVal = subjectFilter.value;
 
-  const deleteBtns = mount.querySelectorAll('.btn-delete-guru');
-  deleteBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.id;
-      const t = db.get('users').find(u => u.id === id);
-      if (confirm(`Apakah Anda yakin ingin menghapus akun guru "${t.name}"?`)) {
-        db.delete('users', id);
-        showToast('Akun guru berhasil dihapus.', 'success');
-        renderGuru(mount);
-      }
+    let filtered = [...teachers];
+
+    if (query) {
+      filtered = filtered.filter(t => {
+        const subjectNames = (t.subjectIds || []).map(id => subjectNameMap[id] || '').join(' ');
+        return `${t.name || ''} ${t.email || ''} ${t.nip || ''} ${t.nisn || ''} ${subjectNames}`.toLowerCase().includes(query);
+      });
+    }
+
+    if (statusVal) {
+      filtered = filtered.filter(t => t.status === statusVal);
+    }
+
+    if (subjectVal) {
+      filtered = filtered.filter(t => (t.subjectIds || []).includes(subjectVal));
+    }
+
+    tbody.innerHTML = filtered.map(t => {
+      const subNames = (t.subjectIds || []).map(sid => subjectNameMap[sid]).filter(Boolean).join(', ') || 'Belum diatur';
+      const statusClass = t.status === 'AKTIF' ? 'success' : 'danger';
+
+      return `
+        <tr>
+          <td>
+            <div style="font-weight:700; color: var(--neutral-900);">${t.name}</div>
+          </td>
+          <td><code>${t.nip || '-'}</code></td>
+          <td>${t.email}</td>
+          <td>${subNames}</td>
+          <td><span class="badge badge-${statusClass}">${t.status}</span></td>
+          <td style="text-align:right;">
+            <div style="display:inline-flex; gap:8px;">
+              <button class="btn btn-secondary btn-icon btn-edit-guru" data-id="${t.id}" title="Edit">
+                <i data-lucide="edit" style="width:16px; height:16px;"></i>
+              </button>
+              <button class="btn btn-danger btn-icon btn-delete-guru" data-id="${t.id}" title="Hapus">
+                <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada data guru.</td></tr>';
+
+    lucide.createIcons();
+
+    tbody.querySelectorAll('.btn-edit-guru').forEach(btn => {
+      btn.addEventListener('click', () => openGuruModal(btn.dataset.id));
     });
-  });
+
+    tbody.querySelectorAll('.btn-delete-guru').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const t = db.get('users').find(u => u.id === id);
+        if (confirm(`Apakah Anda yakin ingin menghapus akun guru "${t.name}"?`)) {
+          db.delete('users', id);
+          showToast('Akun guru berhasil dihapus.', 'success');
+          renderGuru(mount);
+        }
+      });
+    });
+  };
+
+  document.getElementById('btn-tambah-guru').addEventListener('click', () => openGuruModal());
+  searchInput.addEventListener('input', renderTable);
+  statusFilter.addEventListener('change', renderTable);
+  subjectFilter.addEventListener('change', renderTable);
+  renderTable();
 }
 
 function openGuruModal(teacherId = null) {
   const isEdit = !!teacherId;
   const teacher = isEdit ? db.get('users').find(u => u.id === teacherId) : {};
-  const subjects = db.get('subjects');
+  const contextSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1')
+    : activeUser.schoolId;
+  const subjects = db.get('subjects').filter(s => !contextSchoolId || s.schoolId === contextSchoolId);
 
   const title = isEdit ? 'Edit Data Guru' : 'Tambah Guru Baru';
 
@@ -1864,6 +2145,7 @@ function openGuruModal(teacherId = null) {
 
         <div class="form-group">
           <label class="form-label">Mata Pelajaran yang Diajar</label>
+          ${subjects.length === 0 ? '<div style="font-size:12px; color:var(--warning-text); margin:6px 0 4px;">Sekolah ini belum punya mata pelajaran. Tambahkan dulu di Struktur Kurikulum.</div>' : ''}
           <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; margin-top:4px;">
             ${subjects.map(s => {
     const isChecked = isEdit && (teacher.subjectIds || []).includes(s.id) ? 'checked' : '';
@@ -1914,7 +2196,7 @@ function openGuruModal(teacherId = null) {
       status,
       subjectIds,
       role: 'GURU',
-      schoolId: 'sch-1'
+      schoolId: contextSchoolId || 'sch-1'
     };
 
     if (passwordInput) {
@@ -1942,6 +2224,11 @@ function openGuruModal(teacherId = null) {
 // 6. PAGE: STRUKTUR KURIKULUM (Mapel, Kelas, Bab, Topik)
 // ----------------------------------------------------
 function renderKurikulum(mount) {
+  const contextSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1')
+    : activeUser.schoolId;
+  const contextSchool = db.get('schools').find(s => s.id === contextSchoolId) || null;
+
   mount.innerHTML = `
     <div class="nested-structure-grid">
       <!-- 1. Column Mapel & Kelas -->
@@ -2008,13 +2295,27 @@ function renderKurikulum(mount) {
 
   lucide.createIcons();
 
+  if (contextSchool) {
+    const leftColumn = mount.querySelector('.nested-structure-grid > div');
+    if (leftColumn) {
+      leftColumn.insertAdjacentHTML('afterbegin', `
+        <div class="card" style="margin-bottom:4px;">
+          <div class="card-body" style="padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="font-size:12px; color:var(--neutral-600);">Konteks Sekolah</div>
+            <div style="font-weight:800; color:var(--neutral-900);">${contextSchool.name}</div>
+          </div>
+        </div>
+      `);
+    }
+  }
+
   let selectedSubId = null;
   let selectedClsId = null;
   let selectedChId = null;
 
   const reloadSubjects = () => {
     const list = document.getElementById('subject-list-mount');
-    const items = db.get('subjects');
+    const items = db.get('subjects').filter(s => !contextSchoolId || s.schoolId === contextSchoolId);
     list.innerHTML = items.map(s => `
       <div class="structure-item ${selectedSubId === s.id ? 'selected' : ''}" data-sub-id="${s.id}">
         <span style="font-weight:600;">${s.name}</span>
@@ -2063,7 +2364,7 @@ function renderKurikulum(mount) {
 
   const reloadClasses = () => {
     const list = document.getElementById('class-list-mount');
-    const items = db.get('classes');
+    const items = db.get('classes').filter(c => !contextSchoolId || c.schoolId === contextSchoolId);
     list.innerHTML = items.map(c => `
       <div class="structure-item ${selectedClsId === c.id ? 'selected' : ''}" data-cls-id="${c.id}">
         <span style="font-weight:600;">Kelas ${c.name}</span>
@@ -2234,7 +2535,7 @@ function renderKurikulum(mount) {
   document.getElementById('btn-add-subject').addEventListener('click', () => {
     const name = prompt('Masukkan Nama Mata Pelajaran Baru:');
     if (name) {
-      db.insert('subjects', { name, schoolId: 'sch-1' });
+      db.insert('subjects', { name, schoolId: contextSchoolId || 'sch-1' });
       reloadSubjects();
     }
   });
@@ -2242,7 +2543,7 @@ function renderKurikulum(mount) {
   document.getElementById('btn-add-class').addEventListener('click', () => {
     const name = prompt('Masukkan Tingkat Kelas Baru (misal: X, XI, XII):');
     if (name) {
-      db.insert('classes', { name, schoolId: 'sch-1' });
+      db.insert('classes', { name, schoolId: contextSchoolId || 'sch-1' });
       reloadClasses();
     }
   });
@@ -2251,7 +2552,7 @@ function renderKurikulum(mount) {
     if (!selectedSubId || !selectedClsId) return;
     const name = prompt('Masukkan Nama Bab Baru:');
     if (name) {
-      db.insert('chapters', { name, subjectId: selectedSubId, classId: selectedClsId });
+      db.insert('chapters', { name, subjectId: selectedSubId, classId: selectedClsId, schoolId: contextSchoolId || 'sch-1' });
       reloadChapters();
     }
   });
@@ -2290,7 +2591,6 @@ function renderBankSoal(mount) {
     <div style="display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--neutral-400); padding-bottom:10px;">
       <button class="btn btn-primary scope-tab" data-scope="SEMUA">Semua Soal</button>
       <button class="btn btn-secondary scope-tab" data-scope="SAYA">Soal Karya Saya</button>
-      <button class="btn btn-secondary scope-tab" data-scope="GURU_LAIN">Soal Guru Lain (Sama Mapel/Kelas)</button>
       <button class="btn btn-secondary scope-tab" data-scope="FAVORIT">Soal Favorit Saya</button>
     </div>
 
@@ -2358,8 +2658,6 @@ function renderBankSoal(mount) {
     // Apply Scope Filter
     if (filterScope === 'SAYA') {
       list = list.filter(q => q.creatorId === activeUser.id);
-    } else if (filterScope === 'GURU_LAIN') {
-      list = list.filter(q => q.creatorId !== activeUser.id);
     } else if (filterScope === 'FAVORIT') {
       list = list.filter(q => db.isBookmarked(activeUser.id, q.id));
     }
@@ -2599,8 +2897,27 @@ function renderFormSoal(mount, questionId = null) {
     return;
   }
 
-  const subjects = db.get('subjects');
-  const classes = db.get('classes');
+  const contextSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1')
+    : activeUser.schoolId;
+  const schoolSubjects = db.get('subjects').filter(subject => !contextSchoolId || subject.schoolId === contextSchoolId);
+  const classes = db.get('classes').filter(classItem => !contextSchoolId || classItem.schoolId === contextSchoolId);
+  const allowedSubjectIds = activeUser.role === 'GURU'
+    ? (activeUser.subjectIds || []).filter(id => schoolSubjects.some(subject => subject.id === id))
+    : schoolSubjects.map(subject => subject.id);
+
+  if (isEdit && activeUser.role === 'GURU' && !allowedSubjectIds.includes(q.subjectId)) {
+    showToast('Akses ditolak: mata pelajaran soal ini tidak lagi diampu oleh akun Anda.', 'error');
+    window.location.hash = '#soal';
+    return;
+  }
+
+  const formSubjects = schoolSubjects.filter(subject => allowedSubjectIds.includes(subject.id));
+  const selectedSubjectId = isEdit ? q.subjectId : (formSubjects[0]?.id || '');
+  const subjectOptionsHtml = formSubjects.length > 0
+    ? formSubjects.map(subject => `<option value="${subject.id}" ${selectedSubjectId === subject.id ? 'selected' : ''}>${subject.name}</option>`).join('')
+    : '<option value="">Belum ada mata pelajaran yang diampu</option>';
+  const isTeacherSubjectLocked = activeUser.role === 'GURU' && formSubjects.length <= 1;
 
   mount.innerHTML = `
     <div style="display:grid; grid-template-columns: 2fr 1.2fr; gap:28px;">
@@ -2614,10 +2931,10 @@ function renderFormSoal(mount, questionId = null) {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
               <div class="form-group">
                 <label class="form-label" for="q-sub">Mata Pelajaran</label>
-                <select id="q-sub" class="form-input" required>
-                  <option value="">Pilih Mapel</option>
-                  ${subjects.map(s => `<option value="${s.id}" ${q.subjectId === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+                <select id="q-sub" class="form-input" required ${isTeacherSubjectLocked || formSubjects.length === 0 ? 'disabled' : ''}>
+                  ${subjectOptionsHtml}
                 </select>
+                ${activeUser.role === 'GURU' ? `<div style="font-size:11px; color:var(--neutral-500); margin-top:6px;">${formSubjects.length === 0 ? 'Akun guru ini belum dihubungkan ke mata pelajaran. Hubungi admin sekolah.' : formSubjects.length === 1 ? 'Mata pelajaran diisi otomatis sesuai penugasan akun guru.' : 'Hanya mata pelajaran yang diampu akun guru ini yang dapat dipilih.'}</div>` : ''}
               </div>
               <div class="form-group">
                 <label class="form-label" for="q-cls">Tingkat Kelas</label>
@@ -2702,7 +3019,8 @@ function renderFormSoal(mount, questionId = null) {
                 <button class="toolbar-btn" data-editor-cmd="latex-display" title="LaTeX Display ($$)"><i data-lucide="superscript" style="width:14px; height:14px;"></i></button>
                 <span class="toolbar-divider"></span>
                 <button class="toolbar-btn" data-editor-cmd="table" title="Tabel"><i data-lucide="table" style="width:14px; height:14px;"></i></button>
-                <button class="toolbar-btn" data-editor-cmd="image" title="Gambar Link"><i data-lucide="image" style="width:14px; height:14px;"></i></button>
+                <button class="toolbar-btn" data-editor-cmd="image" title="Sisipkan gambar dari URL"><i data-lucide="image" style="width:14px; height:14px;"></i></button>
+                <button class="toolbar-btn" data-editor-cmd="device-image" title="Sisipkan gambar dari perangkat"><i data-lucide="image-plus" style="width:14px; height:14px;"></i></button>
               </div>
               <textarea id="q-text" class="editor-textarea" required>${q.questionText || ''}</textarea>
             </div>
@@ -3084,7 +3402,7 @@ function renderFormSoal(mount, questionId = null) {
 
   // Run initial tools binder
   setupVisualEditor('q-text', 'preview-question-text');
-  
+
   // Auto-generate Kode Soal
   const btnAutoCode = document.getElementById('btn-auto-code');
   if (btnAutoCode) {
@@ -3135,10 +3453,15 @@ function renderFormSoal(mount, questionId = null) {
   updateChoicesForm();
 
   // Handle Form submit
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const type = typeSelect.value;
+    const chosenSubjectId = subSelect.value;
+    if (activeUser.role === 'GURU' && !allowedSubjectIds.includes(chosenSubjectId)) {
+      showToast('Mapel yang dipilih tidak sesuai dengan mata pelajaran yang diampu akun guru ini.', 'error');
+      return;
+    }
     let choices = {};
     let correctAnswer = '';
 
@@ -3178,11 +3501,27 @@ function renderFormSoal(mount, questionId = null) {
       correctAnswer = document.getElementById('q-ans-essay').value;
     }
 
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<i data-lucide="loader-circle"></i><span>Menyimpan gambar...</span>';
+    lucide.createIcons();
+
+    let savedQuestionText;
+    try {
+      savedQuestionText = await uploadEmbeddedQuestionImages(document.getElementById('q-text').value);
+    } catch (error) {
+      showToast(error.message || 'Soal gagal disimpan karena gambar tidak dapat diunggah.', 'error');
+      submitButton.disabled = false;
+      submitButton.innerHTML = '<i data-lucide="save"></i><span>Simpan ke Bank Soal</span>';
+      lucide.createIcons();
+      return;
+    }
+
     const data = {
       code: document.getElementById('q-code').value,
       type,
       difficulty: document.getElementById('q-diff').value,
-      questionText: document.getElementById('q-text').value,
+      questionText: savedQuestionText,
       choices,
       correctAnswer,
       discussion: document.getElementById('q-disc').value,
@@ -3190,11 +3529,13 @@ function renderFormSoal(mount, questionId = null) {
       tag: document.getElementById('q-tag').value,
       competence: document.getElementById('q-comp').value,
       learningGoal: document.getElementById('q-goal').value,
-      subjectId: subSelect.value,
+      subjectId: chosenSubjectId,
       classId: clsSelect.value,
       chapterId: chSelect.value,
       topicId: tpSelect.value,
-      schoolId: 'sch-1',
+      schoolId: activeUser.role === 'SUPER_ADMIN'
+        ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId || 'sch-1')
+        : (activeUser.schoolId || 'sch-1'),
       status: 'DRAFT', // Reverts to Draft on change/creation
       creatorId: activeUser.id,
       creatorName: activeUser.name,
@@ -3209,6 +3550,9 @@ function renderFormSoal(mount, questionId = null) {
       const existing = db.get('questions').find(soal => soal.code === data.code);
       if (existing) {
         showToast(`Kode Soal '${data.code}' sudah digunakan. Buat kode lain.`, 'error');
+        submitButton.disabled = false;
+        submitButton.innerHTML = '<i data-lucide="save"></i><span>Simpan ke Bank Soal</span>';
+        lucide.createIcons();
         return;
       }
       db.insert('questions', data);
@@ -3223,6 +3567,12 @@ function renderFormSoal(mount, questionId = null) {
 // 9. PAGE: IMPORT SOAL (EXCEL)
 // ----------------------------------------------------
 function renderImportSoal(mount) {
+  const contextSchoolId = activeUser.role === 'SUPER_ADMIN'
+    ? (sessionStorage.getItem('active_school_id') || activeUser.schoolId)
+    : activeUser.schoolId;
+  const subjects = db.get('subjects').filter(s => !contextSchoolId || s.schoolId === contextSchoolId);
+  const classes = db.get('classes').filter(c => !contextSchoolId || c.schoolId === contextSchoolId);
+
   mount.innerHTML = `
     <div style="display:grid; grid-template-columns: 1.2fr 2fr; gap:28px;">
       <!-- Upload area -->
@@ -3262,14 +3612,14 @@ function renderImportSoal(mount) {
               <label class="form-label" for="imp-sub">Petakan ke Mata Pelajaran</label>
               <select id="imp-sub" class="form-input" required>
                 <option value="">Pilih Mapel</option>
-                ${db.get('subjects').map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+                ${subjects.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
               <label class="form-label" for="imp-cls">Petakan ke Tingkat Kelas</label>
               <select id="imp-cls" class="form-input" required>
                 <option value="">Pilih Kelas</option>
-                ${db.get('classes').map(c => `<option value="${c.id}">Kelas ${c.name}</option>`).join('')}
+                ${classes.map(c => `<option value="${c.id}">Kelas ${c.name}</option>`).join('')}
               </select>
             </div>
             
@@ -3416,7 +3766,7 @@ function renderImportSoal(mount) {
     }
 
     // Insert each question
-    importedQuestionsList.forEach(q => {
+      importedQuestionsList.forEach(q => {
       // Find matching default Bab/Topic or set empty
       const defaultBab = db.get('chapters').find(ch => ch.subjectId === sId && ch.classId === cId);
       const defaultTopic = defaultBab ? db.get('topics').find(tp => tp.chapterId === defaultBab.id) : null;
@@ -3425,7 +3775,7 @@ function renderImportSoal(mount) {
       q.classId = cId;
       q.chapterId = defaultBab ? defaultBab.id : '';
       q.topicId = defaultTopic ? defaultTopic.id : '';
-      q.schoolId = 'sch-1';
+      q.schoolId = contextSchoolId || 'sch-1';
       q.creatorId = activeUser.id;
       q.creatorName = activeUser.name;
       q.createdAt = new Date().toISOString();
@@ -3475,6 +3825,7 @@ function renderPaketSoal(mount) {
     const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
     const cls = classes.find(c => c.id === p.classId)?.name || '-';
     const examCode = p.examCode || 'EXAM-INF-8921';
+    const typeLabel = getExamTypeLabel(p.type);
     return `
                   <tr>
                     <td>
@@ -3486,7 +3837,7 @@ function renderPaketSoal(mount) {
                       </div>
                     </td>
                     <td>
-                      <span class="badge badge-primary">${p.type}</span>
+                      <span class="badge badge-primary">${typeLabel}</span>
                       <div style="font-size:11px; font-weight:700; color:var(--neutral-700); margin-top:4px;">
                         <i data-lucide="clock" style="width:12px; height:12px; display:inline-block; vertical-align:middle;"></i> ${p.duration || 60} Menit
                       </div>
@@ -3589,6 +3940,7 @@ function openPackageDetailModal(pkgId) {
   const classes = db.get('classes');
   const sub = subjects.find(s => s.id === p.subjectId)?.name || '-';
   const cls = classes.find(c => c.id === p.classId)?.name || '-';
+  const typeLabel = getExamTypeLabel(p.type);
 
   modalContent.innerHTML = `
     <div style="padding:24px; max-width:500px; width:100%;">
@@ -3601,6 +3953,7 @@ function openPackageDetailModal(pkgId) {
         <div style="margin-bottom:8px;"><strong>Nama Paket:</strong> ${p.name}</div>
         <div style="margin-bottom:8px;"><strong>Mata Pelajaran:</strong> ${sub}</div>
         <div style="margin-bottom:8px;"><strong>Kelas:</strong> ${cls}</div>
+        <div style="margin-bottom:8px;"><strong>Jenis Ujian:</strong> ${typeLabel}</div>
         <div style="margin-bottom:8px;"><strong>Kode Paket Ujian:</strong> <span style="font-family:monospace; font-weight:bold; color:var(--primary);">${p.examCode || '-'}</span></div>
       </div>
 
@@ -3747,6 +4100,11 @@ function previewPackageQuestions(pkgId) {
 function openCreatePackageModal() {
   const subjects = db.get('subjects');
   const classes = db.get('classes');
+  const chapters = db.get('chapters');
+  const topics = db.get('topics');
+  const examTypes = getActiveExamTypes();
+  const defaultExamType = examTypes[0]?.code || 'UTS';
+  const examTypeOptions = examTypes.map(t => `<option value="${t.code}" ${t.code === defaultExamType ? 'selected' : ''}>${t.code} - ${t.name}</option>`).join('');
 
   const html = `
     <div class="modal-header">
@@ -3764,12 +4122,7 @@ function openCreatePackageModal() {
           <div class="form-group">
             <label class="form-label" for="p-type">Jenis Ujian</label>
             <select id="p-type" class="form-input" required>
-              <option value="UTS">UTS (Ulangan Tengah Semester)</option>
-              <option value="UAS">UAS (Ulangan Akhir Semester)</option>
-              <option value="PAS">PAS (Penilaian Akhir Semester)</option>
-              <option value="PAT">PAT (Penilaian Akhir Tahun)</option>
-              <option value="TRY_OUT">Try Out</option>
-              <option value="LATIHAN">Latihan Mandiri</option>
+              ${examTypeOptions || '<option value="UTS">UTS</option>'}
             </select>
           </div>
 
@@ -3822,8 +4175,18 @@ function openCreatePackageModal() {
         <!-- Section 1: Manual List Select (Visible in MANUAL mode) -->
         <div id="pkg-manual-selection-block" style="border-top:1px solid var(--neutral-400); padding-top:16px;">
           <h4 style="font-size:13px; font-weight:700; margin-bottom:8px;">Daftar Soal Terverifikasi (APPROVED)</h4>
+          <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; padding:12px; margin-bottom:10px; background:var(--neutral-100); border-radius:6px;">
+            <input type="search" id="p-filter-text" class="form-input" placeholder="Cari teks soal...">
+            <input type="search" id="p-filter-code" class="form-input" placeholder="Kode soal unik...">
+            <select id="p-filter-chapter" class="form-input"><option value="">Semua Bab</option></select>
+            <select id="p-filter-topic" class="form-input"><option value="">Semua Topik Sub-Bab</option></select>
+            <select id="p-filter-type" class="form-input"><option value="">Semua Tipe Soal</option><option value="PG">Pilihan Ganda</option><option value="PG_KOMPLEKS">PG Kompleks</option><option value="BENAR_SALAH">Benar/Salah</option><option value="MENJODOHKAN">Menjodohkan</option><option value="ISIAN_SINGKAT">Isian Singkat</option><option value="ESSAY">Esai</option><option value="NUMERIK">Numerik</option></select>
+            <select id="p-filter-difficulty" class="form-input"><option value="">Semua Tingkat Kesulitan</option><option value="MUDAH">Mudah</option><option value="SEDANG">Sedang</option><option value="SULIT">Sulit</option></select>
+            <input type="search" id="p-filter-competence" class="form-input" placeholder="Kompetensi inti/dasar...">
+            <input type="search" id="p-filter-goal" class="form-input" placeholder="Tujuan pembelajaran...">
+          </div>
           <div style="padding:10px; font-size:12px; background:var(--neutral-100); color:var(--neutral-600); margin-bottom:8px; border-radius:4px;">
-            Pilih Mata Pelajaran & Kelas di atas terlebih dahulu untuk menampilkan soal.
+            Pilih Mata Pelajaran & Kelas, lalu gunakan filter bila diperlukan.
           </div>
           <div style="display:flex; flex-direction:column; gap:8px; max-height:200px; overflow-y:auto;" id="manual-questions-checklist-mount"></div>
         </div>
@@ -3907,6 +4270,12 @@ function openCreatePackageModal() {
   const manualBlock = document.getElementById('pkg-manual-selection-block');
   const randomBlock = document.getElementById('pkg-random-selection-block');
   const checkMount = document.getElementById('manual-questions-checklist-mount');
+  const filterEls = {
+    text: document.getElementById('p-filter-text'), code: document.getElementById('p-filter-code'),
+    chapter: document.getElementById('p-filter-chapter'), topic: document.getElementById('p-filter-topic'),
+    type: document.getElementById('p-filter-type'), difficulty: document.getElementById('p-filter-difficulty'),
+    competence: document.getElementById('p-filter-competence'), goal: document.getElementById('p-filter-goal')
+  };
 
   modeSelect.addEventListener('change', () => {
     if (modeSelect.value === 'MANUAL') {
@@ -3918,6 +4287,30 @@ function openCreatePackageModal() {
     }
   });
 
+  const reloadChapterFilters = () => {
+    const selectedChapter = filterEls.chapter.value;
+    const availableChapters = chapters.filter(ch => ch.subjectId === subSelect.value && ch.classId === clsSelect.value);
+    filterEls.chapter.innerHTML = '<option value="">Semua Bab</option>' + availableChapters.map(ch => `<option value="${ch.id}" ${ch.id === selectedChapter ? 'selected' : ''}>${ch.name}</option>`).join('');
+    const selectedTopic = filterEls.topic.value;
+    const availableTopics = topics.filter(tp => !filterEls.chapter.value || tp.chapterId === filterEls.chapter.value);
+    filterEls.topic.innerHTML = '<option value="">Semua Topik Sub-Bab</option>' + availableTopics.map(tp => `<option value="${tp.id}" ${tp.id === selectedTopic ? 'selected' : ''}>${tp.name}</option>`).join('');
+  };
+
+  const getFilteredApprovedQuestions = () => {
+    const normalise = value => (value || '').toLowerCase();
+    const sId = subSelect.value;
+    const cId = clsSelect.value;
+    return db.get('questions').filter(q => q.subjectId === sId && q.classId === cId && q.status === 'APPROVED')
+      .filter(q => !filterEls.text.value || normalise(q.questionText).includes(normalise(filterEls.text.value)))
+      .filter(q => !filterEls.code.value || normalise(q.code).includes(normalise(filterEls.code.value)))
+      .filter(q => !filterEls.chapter.value || q.chapterId === filterEls.chapter.value)
+      .filter(q => !filterEls.topic.value || q.topicId === filterEls.topic.value)
+      .filter(q => !filterEls.type.value || q.type === filterEls.type.value)
+      .filter(q => !filterEls.difficulty.value || q.difficulty === filterEls.difficulty.value)
+      .filter(q => !filterEls.competence.value || normalise(q.competence).includes(normalise(filterEls.competence.value)))
+      .filter(q => !filterEls.goal.value || normalise(q.learningGoal).includes(normalise(filterEls.goal.value)));
+  };
+
   const reloadChecklist = () => {
     const sId = subSelect.value;
     const cId = clsSelect.value;
@@ -3927,7 +4320,7 @@ function openCreatePackageModal() {
       return;
     }
 
-    const list = db.get('questions').filter(q => q.subjectId === sId && q.classId === cId && q.status === 'APPROVED');
+    const list = getFilteredApprovedQuestions();
     checkMount.innerHTML = list.map(q => `
       <label style="display:flex; align-items:flex-start; gap:10px; padding:8px; border:1px solid var(--neutral-400); border-radius:4px; font-size:12px; cursor:pointer;">
         <input type="checkbox" class="pkg-q-check" value="${q.id}" style="margin-top:2px;">
@@ -3939,8 +4332,13 @@ function openCreatePackageModal() {
     `).join('') || '<p style="font-size:12px; color:var(--danger-text); text-align:center; padding:10px;">Tidak ditemukan Soal berstatus APPROVED untuk kriteria ini.</p>';
   };
 
-  subSelect.addEventListener('change', reloadChecklist);
-  clsSelect.addEventListener('change', reloadChecklist);
+  subSelect.addEventListener('change', () => { reloadChapterFilters(); reloadChecklist(); });
+  clsSelect.addEventListener('change', () => { reloadChapterFilters(); reloadChecklist(); });
+  filterEls.chapter.addEventListener('change', () => { reloadChapterFilters(); reloadChecklist(); });
+  Object.values(filterEls).forEach(el => {
+    el.addEventListener('input', reloadChecklist);
+    el.addEventListener('change', reloadChecklist);
+  });
 
   // Auto generate token button
   document.getElementById('btn-gen-token').addEventListener('click', () => {
@@ -3975,7 +4373,7 @@ function openCreatePackageModal() {
       const numQ = parseInt(document.getElementById('p-num-q').value) || 10;
       const diffProp = document.getElementById('p-random-diff').value;
 
-      let sourceList = db.get('questions').filter(q => q.subjectId === subjectId && q.classId === classId && q.status === 'APPROVED');
+      let sourceList = getFilteredApprovedQuestions();
       if (diffProp !== 'SEMUA') {
         sourceList = sourceList.filter(q => q.difficulty === diffProp);
       }
@@ -4342,10 +4740,10 @@ function renderStudentDashboard(mount) {
 function renderRekapUjian(mount) {
   const subjects = db.get('subjects');
   const classes = db.get('classes');
-  
+
   if (activeUser.role === 'SISWA') {
     const results = db.get('results').filter(r => r.userId === activeUser.id);
-    
+
     // Summary calculations
     const totalExams = results.length;
     const avgScore = totalExams > 0 ? Math.round(results.reduce((acc, r) => acc + r.score, 0) / totalExams) : 0;
@@ -4422,10 +4820,10 @@ function renderRekapUjian(mount) {
               </thead>
               <tbody>
                 ${results.map(r => {
-                  const isPassed = r.score >= 75;
-                  const scoreColor = isPassed ? 'var(--success-text)' : 'var(--danger-text)';
-                  const badgeClass = isPassed ? 'badge-success' : 'badge-danger';
-                  return `
+      const isPassed = r.score >= 75;
+      const scoreColor = isPassed ? 'var(--success-text)' : 'var(--danger-text)';
+      const badgeClass = isPassed ? 'badge-success' : 'badge-danger';
+      return `
                     <tr>
                       <td><strong style="color:var(--neutral-900);">${r.packageName}</strong></td>
                       <td><span class="badge badge-primary">${r.subjectName}</span></td>
@@ -4440,7 +4838,7 @@ function renderRekapUjian(mount) {
                       </td>
                     </tr>
                   `;
-                }).join('') || '<tr><td colspan="6" style="text-align:center; padding:30px;">Belum ada riwayat pengerjaan ujian.</td></tr>'}
+    }).join('') || '<tr><td colspan="6" style="text-align:center; padding:30px;">Belum ada riwayat pengerjaan ujian.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -4455,7 +4853,7 @@ function renderRekapUjian(mount) {
       setTimeout(() => {
         const canvas = document.getElementById('chart-rekap-siswa');
         if (!canvas) return;
-        
+
         const sorted = [...results].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
         const labels = sorted.map(r => new Date(r.timestamp).toLocaleDateString('id-ID'));
         const scores = sorted.map(r => r.score);
@@ -4501,7 +4899,7 @@ function renderRekapUjian(mount) {
   } else {
     // For GURU, ADMIN_SEKOLAH, SUPER_ADMIN
     const allResults = db.get('results');
-    
+
     const renderTable = (filtered) => {
       const tbody = document.getElementById('rekap-tbody-mount');
       if (!tbody) return;
@@ -4532,7 +4930,7 @@ function renderRekapUjian(mount) {
           </tr>
         `;
       }).join('') || '<tr><td colspan="6" style="text-align:center; padding:30px;">Tidak ditemukan data rekapitulasi nilai.</td></tr>';
-      
+
       lucide.createIcons();
     };
 
@@ -4657,12 +5055,12 @@ function renderRekapUjian(mount) {
 
       // Filter by search
       if (searchVal) {
-        filtered = filtered.filter(r => 
-          r.userName.toLowerCase().includes(searchVal) || 
+        filtered = filtered.filter(r =>
+          r.userName.toLowerCase().includes(searchVal) ||
           r.packageName.toLowerCase().includes(searchVal)
         );
       }
-      
+
       // Filter by Class
       if (classVal) {
         filtered = filtered.filter(r => r.className === classVal);
@@ -4690,7 +5088,7 @@ function renderRekapUjian(mount) {
     exportBtn.addEventListener('click', (e) => {
       e.preventDefault();
       const currentFiltered = runFilters();
-      
+
       if (currentFiltered.length === 0) {
         showToast('Tidak ada data untuk diekspor.', 'error');
         return;
@@ -4710,21 +5108,21 @@ function renderRekapUjian(mount) {
       const ws = XLSX.utils.json_to_sheet(excelData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Rekap Nilai Siswa");
-      
+
       // Set Column widths
       const wscols = [
-        {wch: 5},
-        {wch: 25},
-        {wch: 12},
-        {wch: 20},
-        {wch: 35},
-        {wch: 12},
-        {wch: 15},
-        {wch: 25}
+        { wch: 5 },
+        { wch: 25 },
+        { wch: 12 },
+        { wch: 20 },
+        { wch: 35 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 25 }
       ];
       ws['!cols'] = wscols;
 
-      XLSX.writeFile(wb, `Rekap_Nilai_Ujian_${new Date().toISOString().slice(0,10)}.xlsx`);
+      XLSX.writeFile(wb, `Rekap_Nilai_Ujian_${new Date().toISOString().slice(0, 10)}.xlsx`);
       showToast('Berhasil mengunduh rekap hasil ujian Excel!', 'success');
     });
   }
@@ -5127,7 +5525,7 @@ function renderCBTScreen(packageId) {
     document.addEventListener('keydown', startAudio);
 
     // Try playing immediately
-    cbtAudio.play().catch(() => {});
+    cbtAudio.play().catch(() => { });
 
     // Mute event listener
     const muteBtn = document.getElementById('btn-mute-audio');
@@ -5165,7 +5563,7 @@ function renderCBTScreen(packageId) {
       canvas.style.zIndex = '0';
       canvas.style.opacity = '0.08';
       bodyContainer.appendChild(canvas);
-      
+
       startCBTAnimation(canvas);
     }
   }
@@ -5493,9 +5891,9 @@ function renderCBTScreen(packageId) {
     }
     if (acHandlers.keydown) document.removeEventListener('keydown', acHandlers.keydown);
     if (acHandlers.fullscreen) document.removeEventListener('fullscreenchange', acHandlers.fullscreen);
-    
+
     if (document.fullscreenElement) {
-      document.exitFullscreen().catch(err => {});
+      document.exitFullscreen().catch(err => { });
     }
   };
 
@@ -5633,8 +6031,8 @@ function renderCBTScreen(packageId) {
       if (q.type === 'PG' || q.type === 'BENAR_SALAH' || q.type === 'ISIAN_SINGKAT' || q.type === 'NUMERIK') {
         if (String(studentAns).trim().toUpperCase() === String(correctAns).trim().toUpperCase()) correctCount++;
       } else if (q.type === 'PG_KOMPLEKS') {
-        const sortedStudent = [...(studentAns||[])].sort();
-        const sortedCorrect = [...(correctAns||[])].sort();
+        const sortedStudent = [...(studentAns || [])].sort();
+        const sortedCorrect = [...(correctAns || [])].sort();
         if (sortedStudent.length === sortedCorrect.length && sortedStudent.every((val, idx) => val === sortedCorrect[idx])) correctCount++;
       }
     });
@@ -5652,7 +6050,7 @@ function renderCBTScreen(packageId) {
       className: className,
       score: 0, // Nilai 0 karena pelanggaran berat 1-Strike
       realScore: realScore,
-      status: 'PELANGGARAN', 
+      status: 'PELANGGARAN',
       violationReason: reason,
       totalQuestions: totalQ,
       answers: answers,
@@ -5661,7 +6059,7 @@ function renderCBTScreen(packageId) {
 
     db.insert('results', result);
     alert(`UJIAN DIHENTIKAN PAKSA!\nAlasan: ${reason}\n\nNilai Anda digugurkan menjadi 0. Silakan melapor ke pengawas.`);
-    
+
     // Redirect & Reload to flush everything
     window.location.hash = `#dashboard`;
     window.location.reload();
@@ -5712,7 +6110,7 @@ function renderCBTScreen(packageId) {
         e.preventDefault();
       }
       // Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+P
-      if (e.ctrlKey && ['c','v','x','p'].includes(e.key.toLowerCase())) {
+      if (e.ctrlKey && ['c', 'v', 'x', 'p'].includes(e.key.toLowerCase())) {
         e.preventDefault();
       }
     };
@@ -5736,24 +6134,24 @@ function renderCBTScreen(packageId) {
     try {
       // Minta izin mikrofon sesaat untuk mendapatkan label media devices yang valid
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-         const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-         const devices = await navigator.mediaDevices.enumerateDevices();
-         const hasBluetoothOrHeadset = devices.some(d => 
-           (d.kind === 'audiooutput' || d.kind === 'audioinput') && 
-           (d.label.toLowerCase().includes('bluetooth') || d.label.toLowerCase().includes('headset') || d.label.toLowerCase().includes('airpods') || d.label.toLowerCase().includes('buds'))
-         );
-         
-         if (stream) {
-           stream.getTracks().forEach(track => track.stop()); // hentikan stream segera
-         }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasBluetoothOrHeadset = devices.some(d =>
+          (d.kind === 'audiooutput' || d.kind === 'audioinput') &&
+          (d.label.toLowerCase().includes('bluetooth') || d.label.toLowerCase().includes('headset') || d.label.toLowerCase().includes('airpods') || d.label.toLowerCase().includes('buds'))
+        );
 
-         if (hasBluetoothOrHeadset) {
-           alert("PERINGATAN ANTI-CHEAT:\nPerangkat Bluetooth / Headset terdeteksi! Harap lepaskan atau matikan perangkat audio eksternal Anda sebelum memulai ujian.");
-           startLockdownBtn.innerHTML = '<i data-lucide="lock"></i> SAYA MENGERTI, MULAI & KUNCI UJIAN';
-           startLockdownBtn.disabled = false;
-           lucide.createIcons();
-           return; 
-         }
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop()); // hentikan stream segera
+        }
+
+        if (hasBluetoothOrHeadset) {
+          alert("PERINGATAN ANTI-CHEAT:\nPerangkat Bluetooth / Headset terdeteksi! Harap lepaskan atau matikan perangkat audio eksternal Anda sebelum memulai ujian.");
+          startLockdownBtn.innerHTML = '<i data-lucide="lock"></i> SAYA MENGERTI, MULAI & KUNCI UJIAN';
+          startLockdownBtn.disabled = false;
+          lucide.createIcons();
+          return;
+        }
       }
     } catch (err) {
       console.warn('Media devices check skipped or failed.', err);
@@ -5776,7 +6174,7 @@ function renderCBTScreen(packageId) {
     antiCheatOverlay.style.display = 'none';
     cbtShell.style.display = 'flex';
     bindAntiCheatListeners();
-    
+
     // Start timer interval loop NOW
     cbtInterval = setInterval(updateTimerClock, 1000);
     showToast('Ujian Dimulai. Layar Terkunci Anti-Cheat.', 'success');
@@ -6019,7 +6417,7 @@ function startCBTAnimation(canvas) {
 function generateSVGQRCode(text) {
   const size = 25;
   let cells = Array(size).fill(0).map(() => Array(size).fill(false));
-  
+
   const addFinder = (row, col) => {
     for (let r = 0; r < 7; r++) {
       for (let c = 0; c < 7; c++) {
@@ -6038,7 +6436,7 @@ function generateSVGQRCode(text) {
     hash = (hash << 5) - hash + text.charCodeAt(i);
     hash |= 0;
   }
-  
+
   let seed = Math.abs(hash);
   const pseudoRand = () => {
     seed = (seed * 9301 + 49297) % 233280;
@@ -6111,8 +6509,8 @@ function openItemAnalysisModal(questionId) {
         <h4 style="font-size:13px; font-weight:700; margin-bottom:8px;">Distribusi Jawaban Siswa</h4>
         <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
           ${Object.entries(stats.choiceDistribution).map(([option, count]) => {
-            const pct = stats.totalAttempts > 0 ? Math.round((count / stats.totalAttempts) * 100) : 0;
-            return `
+    const pct = stats.totalAttempts > 0 ? Math.round((count / stats.totalAttempts) * 100) : 0;
+    return `
               <div>
                 <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
                   <span>Pilihan ${option}</span>
@@ -6123,7 +6521,7 @@ function openItemAnalysisModal(questionId) {
                 </div>
               </div>
             `;
-          }).join('')}
+  }).join('')}
         </div>
       </div>
 
@@ -6145,7 +6543,7 @@ function openQRCodeModal(packageId) {
   const pkg = db.get('packages').find(p => p.id === packageId);
   if (!pkg) return;
 
-  const examCode = pkg.examCode || `EXAM-INF-${Math.floor(1000 + Math.random()*9000)}`;
+  const examCode = pkg.examCode || `EXAM-INF-${Math.floor(1000 + Math.random() * 9000)}`;
   const qrSvg = generateSVGQRCode(JSON.stringify({ examCode, duration: pkg.duration || 60, name: pkg.name }));
 
   const html = `
@@ -6207,11 +6605,11 @@ function openStudentPermissionModal(packageId) {
           </thead>
           <tbody>
             ${students.map(s => {
-              const isAllowed = db.canStudentTakeExam(s.id, pkg.id);
-              const statusBadge = isAllowed
-                ? '<span class="badge badge-success">IZIN DIBERIKAN</span>'
-                : '<span class="badge badge-danger">BLOCKED / DITOLAK</span>';
-              return `
+    const isAllowed = db.canStudentTakeExam(s.id, pkg.id);
+    const statusBadge = isAllowed
+      ? '<span class="badge badge-success">IZIN DIBERIKAN</span>'
+      : '<span class="badge badge-danger">BLOCKED / DITOLAK</span>';
+    return `
                 <tr>
                   <td style="font-weight:700;">${s.name}</td>
                   <td>Kelas X</td>
@@ -6223,7 +6621,7 @@ function openStudentPermissionModal(packageId) {
                   </td>
                 </tr>
               `;
-            }).join('') || '<tr><td colspan="4" style="text-align:center;">Tidak ada data siswa.</td></tr>'}
+  }).join('') || '<tr><td colspan="4" style="text-align:center;">Tidak ada data siswa.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -6249,6 +6647,7 @@ function openStudentPermissionModal(packageId) {
 // Multi-School Management Page
 function renderKelolaSekolah(mount) {
   const schools = db.get('schools');
+  const users = db.get('users');
 
   mount.innerHTML = `
     <div class="action-row">
@@ -6269,6 +6668,8 @@ function renderKelolaSekolah(mount) {
                 <th>NPSN</th>
                 <th>Alamat & Kontak</th>
                 <th>Tahun Ajaran</th>
+                <th>Status Akses</th>
+                <th>Admin Sekolah Aktif</th>
                 <th style="text-align:right;">Aksi</th>
               </tr>
             </thead>
@@ -6287,6 +6688,8 @@ function renderKelolaSekolah(mount) {
                     <div style="font-size:11px; color:var(--neutral-500);">${s.email || '-'} | Telp: ${s.phone || '-'}</div>
                   </td>
                   <td><span class="badge badge-primary">${s.academicYear || '2025/2026'}</span></td>
+                  <td><span class="badge ${s.status === 'NONAKTIF' ? 'badge-danger' : 'badge-success'}">${s.status || 'AKTIF'}</span></td>
+                  <td>${users.filter(u => u.schoolId === s.id && u.role === 'ADMIN_SEKOLAH' && u.status === 'AKTIF').length}</td>
                   <td style="text-align:right;">
                     <button class="btn btn-secondary btn-icon edit-sch" data-id="${s.id}" title="Edit Sekolah"><i data-lucide="edit"></i></button>
                     ${schools.length > 1 ? `<button class="btn btn-danger btn-icon del-sch" data-id="${s.id}" title="Hapus Sekolah"><i data-lucide="trash-2"></i></button>` : ''}
@@ -6312,13 +6715,14 @@ function renderKelolaSekolah(mount) {
       name,
       npsn: npsn || '10299999',
       academicYear: academicYear || '2025/2026',
+      status: 'NONAKTIF',
       address: 'Jl. Utama Sekolah',
       email: `info@${name.toLowerCase().replace(/[^a-z0-9]/g, '')}.sch.id`,
       phone: '0623-12345',
       logo: 'https://images.unsplash.com/photo-1592280771190-3e2e4d571952?w=150&h=150&fit=crop&q=80'
     });
 
-    showToast('Sekolah baru berhasil ditambahkan!', 'success');
+    showToast('Sekolah baru dibuat nonaktif. Tambahkan admin sekolah aktif untuk mengaktifkan aksesnya.', 'success');
     renderKelolaSekolah(mount);
   });
 
@@ -6345,6 +6749,206 @@ function renderKelolaSekolah(mount) {
   });
 }
 
+// Exam Type CRUD Page
+function renderJenisUjian(mount) {
+  const renderRows = (query = '', statusFilter = '') => {
+    const rows = (db.get('exam_types') || []).filter(item => {
+      const haystack = `${item.code || ''} ${item.name || ''} ${item.description || ''}`.toLowerCase();
+      const matchesQuery = !query || haystack.includes(query.toLowerCase());
+      const matchesStatus = !statusFilter || (statusFilter === 'AKTIF' ? item.status !== 'NONAKTIF' : item.status === 'NONAKTIF');
+      return matchesQuery && matchesStatus;
+    });
+
+    return rows.map(item => {
+      const usageCount = (db.get('packages') || []).filter(p => p.type === item.code).length;
+      return `
+        <tr>
+          <td style="font-weight:800; color:var(--primary); font-family:monospace;">${item.code}</td>
+          <td>
+            <div style="font-weight:700; color:var(--neutral-900);">${item.name}</div>
+            <div style="font-size:11px; color:var(--neutral-500); margin-top:2px;">${item.description || '-'}</div>
+          </td>
+          <td><span class="badge ${item.status === 'NONAKTIF' ? 'badge-danger' : 'badge-success'}">${item.status || 'AKTIF'}</span></td>
+          <td><span class="badge badge-neutral">${usageCount} paket</span></td>
+          <td style="text-align:right;">
+            <div style="display:inline-flex; gap:8px;">
+              <button class="btn btn-secondary btn-icon btn-edit-exam-type" data-id="${item.id}" title="Edit Jenis Ujian"><i data-lucide="edit" style="width:16px; height:16px;"></i></button>
+              <button class="btn btn-danger btn-icon btn-delete-exam-type" data-id="${item.id}" title="Hapus Jenis Ujian"><i data-lucide="trash-2" style="width:16px; height:16px;"></i></button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="5" style="text-align:center; padding:32px; color:var(--neutral-500);">Tidak ada jenis ujian yang cocok.</td></tr>';
+  };
+
+  mount.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="card">
+        <div class="card-body" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+          <div style="flex:1; min-width:220px;">
+            <label class="form-label" style="margin-bottom:6px;">Cari Jenis Ujian</label>
+            <input type="search" id="exam-type-search" class="form-input" placeholder="Cari kode, nama, atau deskripsi...">
+          </div>
+          <div style="width:180px;">
+            <label class="form-label" style="margin-bottom:6px;">Status</label>
+            <select id="exam-type-status" class="form-input">
+              <option value="">Semua Status</option>
+              <option value="AKTIF">Aktif</option>
+              <option value="NONAKTIF">Nonaktif</option>
+            </select>
+          </div>
+          <div style="align-self:flex-end; margin-left:auto;">
+            <button class="btn btn-primary" id="btn-add-exam-type"><i data-lucide="plus"></i> Tambah Jenis Ujian</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Daftar Jenis Ujian</h3>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div class="table-wrapper">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Kode</th>
+                  <th>Nama</th>
+                  <th>Status</th>
+                  <th>Dipakai Paket</th>
+                  <th style="text-align:right;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="exam-type-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  lucide.createIcons();
+
+  const searchInput = document.getElementById('exam-type-search');
+  const statusSelect = document.getElementById('exam-type-status');
+  const tbody = document.getElementById('exam-type-tbody');
+
+  const openExamTypeModal = (typeId = null) => {
+    const isEdit = !!typeId;
+    const item = isEdit ? (db.get('exam_types') || []).find(t => t.id === typeId) : {};
+    const codeDisabled = isEdit ? 'disabled' : '';
+
+    const modalHtml = `
+      <div class="modal-header">
+        <h3 class="modal-title">${isEdit ? 'Edit Jenis Ujian' : 'Tambah Jenis Ujian'}</h3>
+        <button class="modal-close" data-close-modal><i data-lucide="x"></i></button>
+      </div>
+      <form id="exam-type-form">
+        <div class="modal-body" style="display:flex; flex-direction:column; gap:16px;">
+          <div class="form-group">
+            <label class="form-label" for="ex-code">Kode Jenis</label>
+            <input type="text" id="ex-code" class="form-input" value="${item.code || ''}" placeholder="Contoh: UTS" ${codeDisabled} required style="text-transform:uppercase; font-family:monospace; font-weight:700; letter-spacing:1px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ex-name">Nama Jenis Ujian</label>
+            <input type="text" id="ex-name" class="form-input" value="${item.name || ''}" placeholder="Contoh: Ulangan Tengah Semester" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ex-desc">Deskripsi Singkat</label>
+            <textarea id="ex-desc" class="form-input" rows="3" placeholder="Keterangan tambahan">${item.description || ''}</textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ex-status">Status</label>
+            <select id="ex-status" class="form-input">
+              <option value="AKTIF" ${(item.status || 'AKTIF') === 'AKTIF' ? 'selected' : ''}>Aktif</option>
+              <option value="NONAKTIF" ${item.status === 'NONAKTIF' ? 'selected' : ''}>Nonaktif</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
+          <button type="submit" class="btn btn-primary">Simpan</button>
+        </div>
+      </form>
+    `;
+
+    openModal(modalHtml, 'modal-large');
+
+    document.getElementById('exam-type-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const code = document.getElementById('ex-code').value.trim().toUpperCase();
+      const name = document.getElementById('ex-name').value.trim();
+      const description = document.getElementById('ex-desc').value.trim();
+      const status = document.getElementById('ex-status').value;
+
+      if (!code || !name) {
+        showToast('Kode dan nama jenis ujian wajib diisi.', 'error');
+        return;
+      }
+
+      const duplicate = (db.get('exam_types') || []).find(t => t.code === code && t.id !== typeId);
+      if (duplicate) {
+        showToast('Kode jenis ujian sudah digunakan.', 'error');
+        return;
+      }
+
+      const payload = {
+        code,
+        name,
+        description,
+        status
+      };
+
+      if (isEdit) {
+        db.update('exam_types', typeId, payload);
+        showToast('Jenis ujian berhasil diperbarui.', 'success');
+      } else {
+        db.insert('exam_types', {
+          id: `ex-${Date.now()}`,
+          ...payload
+        });
+        showToast('Jenis ujian berhasil ditambahkan.', 'success');
+      }
+
+      closeModal();
+      renderJenisUjian(mount);
+    });
+  };
+
+  const renderTable = () => {
+    tbody.innerHTML = renderRows(searchInput.value.trim(), statusSelect.value);
+    lucide.createIcons();
+
+    tbody.querySelectorAll('.btn-edit-exam-type').forEach(btn => {
+      btn.addEventListener('click', () => openExamTypeModal(btn.dataset.id));
+    });
+
+    tbody.querySelectorAll('.btn-delete-exam-type').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = (db.get('exam_types') || []).find(t => t.id === btn.dataset.id);
+        if (!item) return;
+
+        const inUse = (db.get('packages') || []).some(p => p.type === item.code);
+        if (inUse) {
+          showToast('Jenis ujian ini masih dipakai oleh paket soal dan tidak bisa dihapus.', 'error');
+          return;
+        }
+
+        if (confirm(`Hapus jenis ujian "${item.code} - ${item.name}"?`)) {
+          db.delete('exam_types', item.id);
+          showToast('Jenis ujian berhasil dihapus.', 'success');
+          renderJenisUjian(mount);
+        }
+      });
+    });
+  };
+
+  document.getElementById('btn-add-exam-type').addEventListener('click', () => openExamTypeModal());
+  searchInput.addEventListener('input', renderTable);
+  statusSelect.addEventListener('change', renderTable);
+  renderTable();
+}
+
 // Privileges Matrix Control Page
 function renderPrivileges(mount) {
   const roles = ['ADMIN_SEKOLAH', 'GURU', 'REVIEWER', 'SISWA'];
@@ -6355,7 +6959,22 @@ function renderPrivileges(mount) {
     { key: 'canAutoGenerate', label: 'Generator Paket Soal Otomatis' },
     { key: 'canPracticeExam', label: 'Latihan Ujian Mandiri' },
     { key: 'requireReviewer', label: 'Wajib Persetujuan Reviewer' },
-    { key: 'canStudentScanQR', label: 'Siswa Boleh Scan QR / Input Kode' }
+    { key: 'canStudentScanQR', label: 'Siswa Boleh Scan QR / Input Kode' },
+    { key: 'menuKelolaSekolah', label: 'Menu: Kelola Sekolah' },
+    { key: 'menuProfilSekolah', label: 'Menu: Profil Sekolah' },
+    { key: 'menuManajemenGuru', label: 'Menu: Manajemen Guru' },
+    { key: 'menuKelolaPengguna', label: 'Menu: Kelola Pengguna' },
+    { key: 'menuKelolaSiswa', label: 'Menu: Kelola Siswa' },
+    { key: 'menuHakAkses', label: 'Menu: Hak Akses & Privilege' },
+    { key: 'menuJenisUjian', label: 'Menu: Jenis Ujian' },
+    { key: 'menuStrukturKurikulum', label: 'Menu: Struktur Kurikulum' },
+    { key: 'menuBankSoal', label: 'Menu: Bank Soal' },
+    { key: 'menuImportSoal', label: 'Menu: Import Soal' },
+    { key: 'menuPaketSoal', label: 'Menu: Paket Soal' },
+    { key: 'menuAppUjianAndroid', label: 'Menu: App Ujian Android' },
+    { key: 'menuHasilRekap', label: 'Menu: Hasil & Rekap Ujian' },
+    { key: 'menuAuditLog', label: 'Menu: Audit Log & Keamanan' },
+    { key: 'menuProfilSaya', label: 'Menu: Profil Saya' }
   ];
 
   mount.innerHTML = `
@@ -6377,8 +6996,8 @@ function renderPrivileges(mount) {
                 <tr>
                   <td style="font-weight:700; color:var(--neutral-900);">${p.label}</td>
                   ${roles.map(role => {
-                    const isChecked = db.can(role, p.key);
-                    return `
+    const isChecked = db.can(role, p.key);
+    return `
                       <td>
                         <label class="toggle-switch">
                           <input type="checkbox" class="priv-chk" data-role="${role}" data-key="${p.key}" ${isChecked ? 'checked' : ''}>
@@ -6386,7 +7005,7 @@ function renderPrivileges(mount) {
                         </label>
                       </td>
                     `;
-                  }).join('')}
+  }).join('')}
                 </tr>
               `).join('')}
             </tbody>
@@ -6632,10 +7251,10 @@ function renderKelolaSiswa(mount) {
             </thead>
             <tbody>
               ${allSiswa.length === 0
-                ? '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data siswa.</td></tr>'
-                : allSiswa.map((s, idx) => {
-                    const school = schools.find(sc => sc.id === s.schoolId)?.name || '-';
-                    return `<tr>
+      ? '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data siswa.</td></tr>'
+      : allSiswa.map((s, idx) => {
+        const school = schools.find(sc => sc.id === s.schoolId)?.name || '-';
+        return `<tr>
                       <td style="color:var(--neutral-500);">${idx + 1}</td>
                       <td><strong>${s.name}</strong></td>
                       <td style="font-family:monospace;">${s.nisn || '-'}</td>
@@ -6648,7 +7267,7 @@ function renderKelolaSiswa(mount) {
                         <button class="btn btn-danger btn-icon ks-delete" data-id="${s.id}" title="Hapus"><i data-lucide="trash-2"></i></button>
                       </td>
                     </tr>`;
-                  }).join('')}
+      }).join('')}
             </tbody>
           </table>
         </div>
@@ -6832,69 +7451,146 @@ function renderKelolaUser(mount) {
   const roleBadge = { SUPER_ADMIN: 'badge-primary', ADMIN_SEKOLAH: 'badge-warning', GURU: 'badge-secondary', REVIEWER: 'badge-info', SISWA: 'badge-success' };
 
   mount.innerHTML = `
-    <div class="card">
-      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <h3 class="card-title">Daftar Semua Pengguna</h3>
-        <button class="btn btn-primary" id="btn-add-global-user"><i data-lucide="plus"></i> Tambah Pengguna Baru</button>
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="card">
+        <div class="card-body" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+          <div style="flex:1; min-width:240px;">
+            <label class="form-label" style="margin-bottom:6px;">Cari Pengguna</label>
+            <input type="search" id="global-user-search" class="form-input" placeholder="Nama, email, NIP, atau NISN...">
+          </div>
+          <div style="width:170px;">
+            <label class="form-label" style="margin-bottom:6px;">Role</label>
+            <select id="global-user-role-filter" class="form-input">
+              <option value="">Semua Role</option>
+              ${Object.keys(roleLabel).map(role => `<option value="${role}">${roleLabel[role]}</option>`).join('')}
+            </select>
+          </div>
+          <div style="width:160px;">
+            <label class="form-label" style="margin-bottom:6px;">Status</label>
+            <select id="global-user-status-filter" class="form-input">
+              <option value="">Semua Status</option>
+              <option value="AKTIF">Aktif</option>
+              <option value="NONAKTIF">Nonaktif</option>
+            </select>
+          </div>
+          ${activeUser.role === 'SUPER_ADMIN' ? `
+            <div style="width:220px;">
+              <label class="form-label" style="margin-bottom:6px;">Sekolah</label>
+              <select id="global-user-school-filter" class="form-input">
+                <option value="">Semua Sekolah</option>
+                ${schools.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
+          <button class="btn btn-primary" id="btn-add-global-user" style="margin-left:auto;"><i data-lucide="plus"></i> Tambah Pengguna Baru</button>
+        </div>
       </div>
-      <div class="card-body" style="padding:0; overflow-x:auto;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Nama &amp; NIP/NISN</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Asal Sekolah</th>
-              <th>Status</th>
-              <th>Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${allUsers.length === 0
-              ? '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data pengguna.</td></tr>'
-              : allUsers.map((u, idx) => {
-                  const school = schools.find(s => s.id === u.schoolId)?.name || (u.role === 'SUPER_ADMIN' ? 'Semua Sekolah' : '-');
-                  const badge = roleBadge[u.role] || 'badge-secondary';
-                  const label = roleLabel[u.role] || u.role;
-                  return `<tr>
-                    <td style="color:var(--neutral-500);">${idx + 1}</td>
-                    <td>
-                      <strong>${u.name}</strong><br>
-                      <span style="font-size:11px; color:var(--neutral-500);">${u.nip || u.nisn || u.email}</span>
-                    </td>
-                    <td>${u.email}</td>
-                    <td><span class="badge ${badge}">${label}</span></td>
-                    <td><span style="font-size:12px;">${school}</span></td>
-                    <td><span class="badge ${u.status === 'AKTIF' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
-                    <td>
-                      <button class="btn btn-secondary btn-icon edit-global-user" data-id="${u.id}" title="Edit Data"><i data-lucide="edit"></i></button>
-                      ${u.id !== activeUser.id ? `<button class="btn btn-danger btn-icon delete-global-user" data-id="${u.id}" title="Hapus"><i data-lucide="trash-2"></i></button>` : ''}
-                    </td>
-                  </tr>`;
-                }).join('')}
-          </tbody>
-        </table>
+
+      <div class="card">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <h3 class="card-title">Daftar Semua Pengguna</h3>
+          <span style="font-size:12px; color:var(--neutral-600);" id="global-user-count"></span>
+        </div>
+        <div class="card-body" style="padding:0; overflow-x:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Nama &amp; NIP/NISN</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Asal Sekolah</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="global-user-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   `;
   refreshIcons();
 
+  const searchInput = document.getElementById('global-user-search');
+  const roleFilter = document.getElementById('global-user-role-filter');
+  const statusFilter = document.getElementById('global-user-status-filter');
+  const schoolFilter = document.getElementById('global-user-school-filter');
+  const tbody = document.getElementById('global-user-tbody');
+  const countLabel = document.getElementById('global-user-count');
+
+  const renderTable = () => {
+    const query = searchInput.value.trim().toLowerCase();
+    const roleVal = roleFilter.value;
+    const statusVal = statusFilter.value;
+    const schoolVal = schoolFilter ? schoolFilter.value : '';
+
+    let filtered = [...allUsers];
+
+    if (query) {
+      filtered = filtered.filter(u => {
+        const schoolName = schools.find(s => s.id === u.schoolId)?.name || '';
+        return `${u.name || ''} ${u.email || ''} ${u.nip || ''} ${u.nisn || ''} ${schoolName}`.toLowerCase().includes(query);
+      });
+    }
+
+    if (roleVal) filtered = filtered.filter(u => u.role === roleVal);
+    if (statusVal) filtered = filtered.filter(u => u.status === statusVal);
+    if (schoolVal) filtered = filtered.filter(u => u.schoolId === schoolVal);
+
+    countLabel.innerText = `${filtered.length} hasil`;
+    tbody.innerHTML = filtered.length === 0
+      ? '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--neutral-500);">Belum ada data pengguna yang cocok.</td></tr>'
+      : filtered.map((u, idx) => {
+        const school = schools.find(s => s.id === u.schoolId)?.name || (u.role === 'SUPER_ADMIN' ? 'Semua Sekolah' : '-');
+        const badge = roleBadge[u.role] || 'badge-secondary';
+        const label = roleLabel[u.role] || u.role;
+        return `<tr>
+          <td style="color:var(--neutral-500);">${idx + 1}</td>
+          <td>
+            <strong>${u.name}</strong><br>
+            <span style="font-size:11px; color:var(--neutral-500);">${u.nip || u.nisn || u.email}</span>
+          </td>
+          <td>${u.email}</td>
+          <td><span class="badge ${badge}">${label}</span></td>
+          <td><span style="font-size:12px;">${school}</span></td>
+          <td><span class="badge ${u.status === 'AKTIF' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
+          <td>
+            <button class="btn btn-secondary btn-icon edit-global-user" data-id="${u.id}" title="Edit Data"><i data-lucide="edit"></i></button>
+            ${u.id !== activeUser.id ? `<button class="btn btn-danger btn-icon delete-global-user" data-id="${u.id}" title="Hapus"><i data-lucide="trash-2"></i></button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+
+    refreshIcons();
+
+    tbody.querySelectorAll('.edit-global-user').forEach(btn => {
+      btn.onclick = () => openUserModal(btn.dataset.id, mount);
+    });
+
+    tbody.querySelectorAll('.delete-global-user').forEach(btn => {
+      btn.onclick = () => {
+        const target = db.get('users').find(u => u.id === btn.dataset.id);
+        if (!target || (activeUser.role === 'ADMIN_SEKOLAH' && target.schoolId !== activeUser.schoolId) || target.role === 'SUPER_ADMIN') {
+          showToast('Anda tidak berwenang menghapus pengguna ini.', 'error');
+          return;
+        }
+        if (confirm('Yakin ingin menghapus pengguna ini secara permanen dari sistem?')) {
+          db.delete('users', btn.dataset.id);
+          if (target.role === 'ADMIN_SEKOLAH') db.syncSchoolAccess(target.schoolId);
+          showToast('Pengguna berhasil dihapus.', 'success');
+          renderKelolaUser(mount);
+        }
+      };
+    });
+  };
+
   mount.querySelector('#btn-add-global-user').onclick = () => openUserModal(null, mount);
-
-  mount.querySelectorAll('.edit-global-user').forEach(btn => {
-    btn.onclick = () => openUserModal(btn.dataset.id, mount);
-  });
-
-  mount.querySelectorAll('.delete-global-user').forEach(btn => {
-    btn.onclick = () => {
-      if (confirm('Yakin ingin menghapus pengguna ini secara permanen dari sistem?')) {
-        db.delete('users', btn.dataset.id);
-        showToast('Pengguna berhasil dihapus.', 'success');
-        renderKelolaUser(mount);
-      }
-    };
-  });
+  searchInput.addEventListener('input', renderTable);
+  roleFilter.addEventListener('change', renderTable);
+  statusFilter.addEventListener('change', renderTable);
+  if (schoolFilter) schoolFilter.addEventListener('change', renderTable);
+  renderTable();
 }
 
 function openUserModal(userId = null, parentMount = null) {
@@ -6909,6 +7605,11 @@ function openUserModal(userId = null, parentMount = null) {
   const isSuperAdmin = activeUser.role === 'SUPER_ADMIN';
   const isAdminSekolah = activeUser.role === 'ADMIN_SEKOLAH';
 
+  if (isEdit && (!u.id || (isAdminSekolah && (u.schoolId !== activeUser.schoolId || u.role === 'ADMIN_SEKOLAH' || u.role === 'SUPER_ADMIN')) || (u.role === 'SUPER_ADMIN' && u.id !== activeUser.id))) {
+    showToast('Anda tidak berwenang mengubah pengguna ini.', 'error');
+    return;
+  }
+
   let schoolOptionsHtml = '';
   if (isSuperAdmin) {
     schoolOptionsHtml = '<option value="">-- Tidak Terikat Sekolah --</option>';
@@ -6922,8 +7623,8 @@ function openUserModal(userId = null, parentMount = null) {
 
   let roleOptionsHtml = '';
   if (isSuperAdmin) {
-    roleOptionsHtml = `
-      <option value="SUPER_ADMIN" ${u.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
+    roleOptionsHtml = `${u.id === activeUser.id ? `
+      <option value="SUPER_ADMIN" selected>Owner / Super Admin</option>` : ''}
       <option value="ADMIN_SEKOLAH" ${u.role === 'ADMIN_SEKOLAH' ? 'selected' : ''}>Admin Sekolah</option>
       <option value="GURU" ${(!u.role || u.role === 'GURU') ? 'selected' : ''}>Guru</option>
       <option value="REVIEWER" ${u.role === 'REVIEWER' ? 'selected' : ''}>Reviewer Soal</option>
@@ -7009,9 +7710,22 @@ function openUserModal(userId = null, parentMount = null) {
 
     if (!nameVal || !emailVal) { showToast('Nama dan Email wajib diisi!', 'error'); return; }
     if (!isEdit && !passVal) { showToast('Kata sandi wajib diisi untuk pengguna baru!', 'error'); return; }
+    if (u.id === activeUser.id && (roleVal !== 'SUPER_ADMIN' || statusVal !== 'AKTIF')) {
+      showToast('Akun owner harus tetap berperan sebagai Super Admin dan aktif.', 'error');
+      return;
+    }
+    const duplicate = db.get('users').find(user => user.email.toLowerCase() === emailVal.toLowerCase() && user.id !== u.id);
+    if (duplicate) { showToast('Alamat email sudah digunakan oleh pengguna lain.', 'error'); return; }
     if (!schoolVal && roleVal !== 'SUPER_ADMIN') {
       showToast('Pilih sekolah terlebih dahulu!', 'error');
       return;
+    }
+    if (roleVal === 'ADMIN_SEKOLAH' && statusVal === 'AKTIF') {
+      const activeSchoolAdmin = db.get('users').find(user => user.schoolId === schoolVal && user.role === 'ADMIN_SEKOLAH' && user.status === 'AKTIF' && user.id !== u.id);
+      if (activeSchoolAdmin) {
+        showToast(`Sekolah ini sudah memiliki admin aktif: ${activeSchoolAdmin.name}. Nonaktifkan atau pindahkan admin tersebut terlebih dahulu.`, 'error');
+        return;
+      }
     }
 
     const updatedUser = {
@@ -7031,9 +7745,13 @@ function openUserModal(userId = null, parentMount = null) {
 
     if (isEdit) {
       db.update('users', u.id, updatedUser);
+      if (u.role === 'ADMIN_SEKOLAH') db.syncSchoolAccess(u.schoolId);
+      if (updatedUser.role === 'ADMIN_SEKOLAH') db.syncSchoolAccess(updatedUser.schoolId);
+      if (u.id === activeUser.id) sessionStorage.setItem('active_user', JSON.stringify(updatedUser));
       showToast(`Data "${nameVal}" berhasil diperbarui.`, 'success');
     } else {
       db.insert('users', updatedUser);
+      if (updatedUser.role === 'ADMIN_SEKOLAH') db.syncSchoolAccess(updatedUser.schoolId);
       showToast(`Pengguna "${nameVal}" berhasil ditambahkan.`, 'success');
     }
     closeModal();
@@ -7041,4 +7759,3 @@ function openUserModal(userId = null, parentMount = null) {
     if (mountEl) renderKelolaUser(mountEl);
   };
 }
-

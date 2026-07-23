@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BankSoalPro - Sistem Manajemen Bank Soal</title>
   <meta name="description" content="BankSoalPro - Platform CBT & Bank Soal terbaik untuk sekolah. Kelola soal, ujian online, anti-cheat, dan laporan nilai secara otomatis.">
-
   <!-- Premium Stylesheet -->
   <link rel="stylesheet" href="style.css">
 
@@ -63,7 +62,42 @@
     }
   </style>
 
+  <script>
+    // ES modules are blocked by Chromium-based browsers when an HTML file is opened
+    // directly from disk (file:///). Show the solution instead of leaving the loader
+    // spinning forever.
+    function showStartupHelp(message) {
+      const app = document.getElementById('app');
+      if (!app || app.dataset.startupHelpShown) return;
+      app.dataset.startupHelpShown = 'true';
+      app.innerHTML = `
+        <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;background:#f8fafc;color:#1e293b;box-sizing:border-box;">
+          <div style="max-width:560px;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;box-shadow:0 12px 32px rgba(15,23,42,.08);text-align:center;">
+            <div style="font-size:38px;margin-bottom:10px;">&#9888;&#65039;</div>
+            <h1 style="font-size:22px;margin:0 0 12px;">BankSoalPro perlu dijalankan melalui server lokal</h1>
+            <p style="line-height:1.6;color:#475569;margin:0 0 18px;">${message}</p>
+            <div style="text-align:left;background:#eef2ff;border-radius:10px;padding:16px;color:#3730a3;line-height:1.65;">
+              <strong>Cara membuka aplikasi:</strong><br>
+              1. Tutup tab ini.<br>
+              2. Klik dua kali <code style="background:#fff;padding:2px 6px;border-radius:4px;">run.bat</code> di folder aplikasi.<br>
+              3. Browser akan membuka <code style="background:#fff;padding:2px 6px;border-radius:4px;">http://localhost:8000</code>.
+            </div>
+          </div>
+        </div>`;
+    }
+
+    if (window.location.protocol === 'file:') {
+      showStartupHelp('File index.html dibuka langsung dari komputer. Demi keamanan, browser tidak dapat menjalankan komponen aplikasi dengan cara ini.');
+    }
+
+    window.addEventListener('error', (event) => {
+      if (event.target && event.target.id === 'main-app-script') {
+        showStartupHelp('Komponen utama aplikasi gagal dimuat. Jalankan aplikasi melalui run.bat lalu buka alamat localhost yang ditampilkan.');
+      }
+    }, true);
+  </script>
+
   <!-- Main JavaScript App module -->
-  <script type="module" src="app.js"></script>
+  <script id="main-app-script" type="module" src="app.js"></script>
 </body>
 </html>
